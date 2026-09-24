@@ -1,4 +1,5 @@
 const STATUS_FALTAS = [
+  'Falta sem justificativa',
   'Falta',
   'Advertência',
   'Advertencia',

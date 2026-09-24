@@ -309,7 +309,7 @@
       return;
     }
 
-    var statusFaltas = ["FALTA", "ATESTADO MÉDICO", "ATESTADO DE ÓBITO", "DECLARAÇÃO", "BO", "ÓBITO", "LICENÇA CASAMENTO", "LICENÇA PATERNIDADE"];
+    var statusFaltas = ["FALTA SEM JUSTIFICATIVA", "FALTA", "ATESTADO MÉDICO", "ATESTADO DE ÓBITO", "DECLARAÇÃO", "BO", "ÓBITO", "LICENÇA CASAMENTO", "LICENÇA PATERNIDADE"];
     var statusPresenca = ["PRESENTE", "ADVERTÊNCIA"];
 
     var totalFaltas = 0;

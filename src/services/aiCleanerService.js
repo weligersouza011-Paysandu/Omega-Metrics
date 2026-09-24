@@ -1,5 +1,6 @@
 const STATUS_CANONICOS = {
-  'falta': 'Falta',
+  'falta sem justificativa': 'Falta sem justificativa',
+  'falta': 'Falta sem justificativa',
   'advertencia': 'Advertência',
   'advertência': 'Advertência',
   'advertancia': 'Advertência',
@@ -258,7 +259,7 @@ async function callGeminiForCleaning(unresolvedItems) {
     var prompt = 'Você é um normalizador de dados de recursos humanos.\n' +
       'Corrija os erros de digitação e acentuação nos textos abaixo.\n' +
       'Retorne APENAS um array JSON, na mesma ordem, com os textos corrigidos.\n\n' +
-      'Valores de status devem ser: Falta, Advertência, Atestado, Atestado de Óbito, ' +
+      'Valores de status devem ser: Falta sem justificativa, Advertência, Atestado, Atestado de Óbito, ' +
       'Boletim de Ocorrência, Declaração, Declaração Banco, Exame, Exame Médico, ' +
       'Licença Casamento, Licença Maternidade, Licença Paternidade, Médico, Periódico.\n\n' +
       'Valores de motivo devem ser: ALTO ÍNDICE DE ABSENTEÍSMO, BAIXA PRODUTIVIDADE, ' +
