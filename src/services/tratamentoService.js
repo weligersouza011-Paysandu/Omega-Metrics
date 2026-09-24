@@ -1005,6 +1005,38 @@ function calcTurnover(desligamentoData, efetivoTotal) {
   };
 }
 
+// Exclui do cálculo os colaboradores cujo status atual (linha de maior
+// data) é demissão — cobre todas as variações via getStatusMeta/grupo
+// DEMISSAO. Empate de data: demissão vence. Recontratação (linhas
+// posteriores à demissão) conta como ativo.
+function filtrarAtivos(pontoData) {
+  const ultima = new Map();
+  for (const row of pontoData) {
+    const chave = String(row.chaveFuncionario || row.nomeFuncionario || '').trim();
+    if (!chave) continue;
+    const dia = row.dia instanceof Date
+      ? row.dia.toISOString().slice(0, 10)
+      : String(row.dia || '');
+    const ehDemissao = getStatusMeta(row.status).grupo === 'DEMISSAO';
+    const prev = ultima.get(chave);
+    if (!prev || dia > prev.dia) {
+      ultima.set(chave, { dia, ehDemissao });
+    } else if (dia === prev.dia && ehDemissao) {
+      prev.ehDemissao = true;
+    }
+  }
+
+  const demitidos = new Set();
+  for (const [chave, info] of ultima) {
+    if (info.ehDemissao) demitidos.add(chave);
+  }
+
+  return pontoData.filter(row => {
+    const chave = String(row.chaveFuncionario || row.nomeFuncionario || '').trim();
+    return !chave || !demitidos.has(chave);
+  });
+}
+
 function buildGraficos(pontoData, desligamentoData, absenteismo, turnover) {
   const absenteismoPorStatus = absenteismo.detalhamento.map(d => ({
     label: d.status,
@@ -1013,11 +1045,13 @@ function buildGraficos(pontoData, desligamentoData, absenteismo, turnover) {
 
   const absenteismoPorMes = calcAbsenteismoPorMes(pontoData);
 
-  const absenteismoPorFuncao = calcAbsenteismoPorFuncao(pontoData);
+  // Ranking e por-função consideram apenas o contingente atual mobilizado
+  const ativos = filtrarAtivos(pontoData);
+  const absenteismoPorFuncao = calcAbsenteismoPorFuncao(ativos);
 
   const absenteismoPorDia = calcAbsenteismoPorDia(pontoData);
 
-  const absenteismoPorFuncionario = calcAbsenteismoPorFuncionario(pontoData);
+  const absenteismoPorFuncionario = calcAbsenteismoPorFuncionario(ativos);
 
   const turnoverPorMotivo = turnover.detalhamentoMotivos.map(d => ({
     label: d.motivo,
@@ -1114,6 +1148,7 @@ module.exports = {
   badgeForStatus,
   classificarRegistros,
   calcularAbsenteismo,
+  filtrarAtivos,
   calcEfetivoAtivoPorMes,
   calcTurnoverMensal,
   calcTurnoverPorFuncao,

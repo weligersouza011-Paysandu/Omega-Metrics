@@ -362,6 +362,27 @@
       return;
     }
 
+    // Status atual por colaborador (maior dia) — demitidos ficam de fora
+    // das agregações de absenteísmo (ranking e por-função locais)
+    var statusAtualPorNome = {};
+    records.forEach(function (r) {
+      var nome = r.funcionario || r.nome || r.nomeFuncionario || 'Não Identificado';
+      var st = (r.status || '').toUpperCase().trim();
+      var isDemissao = st === 'DEMITIDO' || st.indexOf('DEMISS') !== -1 ||
+        st.indexOf('DESLIG') !== -1 || st.indexOf('RESCIS') !== -1;
+      var d = r.dia || '';
+      var prev = statusAtualPorNome[nome];
+      if (!prev || d > prev.dia) {
+        statusAtualPorNome[nome] = { dia: d, demissao: isDemissao };
+      } else if (d === prev.dia && isDemissao) {
+        prev.demissao = true;
+      }
+    });
+    function ehDemitidoAtual(nome) {
+      var info = statusAtualPorNome[nome];
+      return !!(info && info.demissao);
+    }
+
     var statusFaltas = ["FALTA SEM JUSTIFICATIVA", "FALTA", "ATESTADO MÉDICO", "ATESTADO DE ÓBITO", "DECLARAÇÃO", "BO", "ÓBITO", "LICENÇA CASAMENTO", "LICENÇA PATERNIDADE"];
     var statusPresenca = ["PRESENTE", "ADVERTÊNCIA"];
 
@@ -389,7 +410,7 @@
       var isFalta = statusFaltas.indexOf(st) !== -1;
       var isPresenca = statusPresenca.indexOf(st) !== -1 || (!st && r.entrada1);
 
-      if (isFalta || isPresenca) {
+      if ((isFalta || isPresenca) && !ehDemitidoAtual(fName)) {
         if (!diaMap[d]) diaMap[d] = { data: d, faltas: 0, previstos: 0, percentual: 0 };
         diaMap[d].previstos++;
         if (isFalta) {
@@ -1204,7 +1225,7 @@
         datasets: [{
           label: '% Absenteísmo',
           data: rows.map(function (d) { return d.value; }),
-          backgroundColor: CORES.vinho,
+          backgroundColor: '#718096',
           borderRadius: 4
         }]
       },
@@ -1213,7 +1234,15 @@
         maintainAspectRatio: false,
         plugins: {
           legend: { display: false },
-          datalabels: { display: false },
+          datalabels: {
+            display: true,
+            anchor: 'end',
+            align: 'top',
+            offset: 2,
+            color: '#334155',
+            font: { family: 'Inter', weight: '700', size: 10 },
+            formatter: function (v) { return pctBr(v); }
+          },
           tooltip: {
             callbacks: {
               label: function (c) { return ' % Absenteísmo: ' + pctBr(c.parsed.y); }
@@ -1221,8 +1250,13 @@
           }
         },
         scales: {
+          x: {
+            grid: { display: false }
+          },
           y: {
             beginAtZero: true,
+            grace: '12%',
+            grid: { display: false },
             ticks: { callback: function (v) { return v + '%'; } }
           }
         }
