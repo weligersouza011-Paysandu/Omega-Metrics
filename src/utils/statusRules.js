@@ -66,6 +66,8 @@ const STATUS_ALIASES = {
   RESCISÃO: 'DEMITIDO'
 };
 
+const RE_DEMISSAO = /DEMITID[OA]S?|DEMISS(OES|AO)|DESLIGAD[OA]S?|RESCIS(OES|AO)/;
+
 const DESCONHECIDO_META = {
   grupo: 'DESCONHECIDO',
   badgeClass: 'badge-gray',
@@ -103,6 +105,7 @@ for (const [grupo, cfg] of Object.entries(STATUS_CONFIG)) {
 function sanitizeStatus(raw) {
   const key = normalizeStatusKey(raw);
   if (!key) return '';
+  if (RE_DEMISSAO.test(key)) return 'DEMITIDO';
   const alias = STATUS_ALIASES[key];
   if (alias) return alias;
   const hit = _index.get(key);

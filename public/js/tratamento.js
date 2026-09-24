@@ -69,6 +69,8 @@
     RESCISÃO: 'DEMITIDO'
   };
 
+  var RE_DEMISSAO = /DEMITID[OA]S?|DEMISS(OES|AO)|DESLIGAD[OA]S?|RESCIS(OES|AO)/;
+
   function normalizeStatusKey(s) {
     return String(s || '')
       .normalize('NFD')
@@ -81,6 +83,7 @@
   function sanitizeStatus(raw) {
     var key = normalizeStatusKey(raw);
     if (!key) return '';
+    if (RE_DEMISSAO.test(key)) return 'DEMITIDO';
     var alias = STATUS_ALIASES[key];
     if (alias) return alias;
     var hit = statusIndex[key];
@@ -319,6 +322,9 @@
           // Mantém STATUS_CONFIG local; servidor envia cópia p/ auditoria.
         }
         buildStateFromResponse(data);
+        dadosProcessados.forEach(function (r) {
+          if (getStatusMeta(r.status).grupo === 'DEMISSAO') ensureDemissaoPendente(r);
+        });
         renderAll();
         if (data.preview && data.preview.previsaoAbsenteismo) {
           var elKpi = document.getElementById('kpi-absenteismo-preview');
@@ -442,9 +448,15 @@
     return String(val).trim() === '';
   }
 
+  function isDemissaoSemJustificativa(r) {
+    if (getStatusMeta(r.status).grupo !== 'DEMISSAO') return false;
+    var id = getDemissaoIdForRow(r);
+    return !(id && justificativas[id]);
+  }
+
   function getVisibleRows() {
     return dadosProcessados.filter(function (r) {
-      return r.corrigido || r.rowIndex < MAX_PREVIEW_ROWS;
+      return (r.corrigido || r.rowIndex < MAX_PREVIEW_ROWS) && !isDemissaoSemJustificativa(r);
     });
   }
 
@@ -880,9 +892,7 @@
     justificativas[editingDemissaoId] = selected.value;
     closeModal();
 
-    var d = demissoesPendentes.find(function (x) { return x.id === editingDemissaoId; });
-    if (d) renderDemissoes(demissoesPendentes);
-    updateSendButton();
+    renderAll();
   }
 
   function updateDemissoesBadge() {

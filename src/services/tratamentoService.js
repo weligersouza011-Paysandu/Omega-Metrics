@@ -73,7 +73,16 @@ const HEADER_MAP_DESLIG = {
   'aviso': 'aviso'
 };
 
-const DEMISSAO_KEYWORDS = ['demissão', 'demissao', 'demitido', 'desligado', 'rescisão', 'rescisao'];
+const RE_DEMISSAO = /DEMITID[OA]S?|DEMISS(OES|AO)|DESLIGAD[OA]S?|RESCIS(OES|AO)/;
+
+function chaveDemissao(texto) {
+  return String(texto || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase();
+}
 
 function readSheet(buffer) {
   const workbook = XLSX.read(buffer, { type: 'buffer' });
@@ -179,6 +188,7 @@ function normalizePontoRow(rawRow, colMap) {
     faltaEAtraso: String(get('faltaEAtraso')).trim(),
     atestado: String(get('atestado')).trim(),
     extra50: safeNumber(get('extra50')),
+    statusBruto: String(get('status')).trim(),
     status: sanitizeStatus(get('status')),
     cid: ''
   };
@@ -204,19 +214,16 @@ function normalizeDesligRow(rawRow, colMap) {
 
 function detectDemissao(row) {
   const detections = [];
-  const status = (row.status || '').toLowerCase();
-  const entrada1Text = row.entrada1?.text?.toLowerCase() || '';
-  const saida2Text = row.saida2?.text?.toLowerCase() || '';
+  const campos = [
+    ['status', row.statusBruto || row.status],
+    ['entrada1', row.entrada1 && row.entrada1.text],
+    ['saida2', row.saida2 && row.saida2.text]
+  ];
 
-  for (const kw of DEMISSAO_KEYWORDS) {
-    if (status.includes(kw)) {
-      detections.push({ campo: 'status', valor: row.status, palavraChave: kw });
-    }
-    if (entrada1Text.includes(kw)) {
-      detections.push({ campo: 'entrada1', valor: row.entrada1.text, palavraChave: kw });
-    }
-    if (saida2Text.includes(kw)) {
-      detections.push({ campo: 'saida2', valor: row.saida2.text, palavraChave: kw });
+  for (const [campo, valor] of campos) {
+    const match = chaveDemissao(valor).match(RE_DEMISSAO);
+    if (match) {
+      detections.push({ campo, valor: valor || '', palavraChave: match[0].toLowerCase() });
     }
   }
   return detections;
