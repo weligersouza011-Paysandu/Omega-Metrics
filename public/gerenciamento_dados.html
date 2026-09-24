@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gestão de Dados Diários — Omega Metrics</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="style.css" rel="stylesheet">
+
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/pt.js"></script>
+</head>
+<body class="rhub-app">
+
+  <!-- ============ CABEÇALHO SUPERIOR (TOPBAR) ============ -->
+  <header class="rhub-topbar no-print">
+    <button type="button" class="rhub-topbar__menu" id="btn-menu" title="Menu" aria-label="Abrir menu">
+      <i class="bi bi-list"></i>
+    </button>
+    <div class="rhub-topbar__logo">
+      <img src="assets/logo.png" alt="Omega" onerror="this.style.display='none'">
+      <span>OMEGA SERVICE</span>
+    </div>
+    <div class="rhub-topbar__actions">
+      <span class="rhub-topbar__date" id="data-por-extenso">—</span>
+    </div>
+  </header>
+
+  <!-- GAVETA LATERAL DO MENU -->
+  <nav class="rhub-drawer no-print" id="menu-drawer" aria-hidden="true">
+    <a href="dashboard.html"><i class="bi bi-speedometer2"></i> Dashboard</a>
+    <a href="tratamento.html"><i class="bi bi-cloud-arrow-up"></i> Tratamento</a>
+    <a href="gerenciamento_dados.html" class="active"><i class="bi bi-database-down"></i> Gestão de Dados</a>
+  </nav>
+
+  <!-- ============ HERO ============ -->
+  <section class="rhub-hero">
+    <div class="rhub-hero__card">
+      <div class="rhub-hero__badge">3</div>
+      <div>
+        <h1 class="rhub-hero__title">Gestão e Expurgo de Dados Diários</h1>
+      </div>
+    </div>
+  </section>
+
+  <section class="rhub-absent-head" aria-label="Seção Gestão de Dados">
+    <div class="rhub-section-divider" role="separator">
+      <span class="rhub-section-divider__label">GESTÃO DE DADOS</span>
+    </div>
+    <p class="rhub-section-desc">
+      Selecione uma data para verificar os registros, baixar o backup ou excluir permanentemente os dados do dia.
+    </p>
+  </section>
+
+  <!-- ============ CONTEÚDO PRINCIPAL ============ -->
+  <main class="rhub-main" id="rhub-main">
+
+    <div id="status-loading" class="status-bar" style="display:none;">
+      <div class="spinner"></div>
+      <span id="status-loading-text">Consultando registros do dia...</span>
+    </div>
+
+    <div id="status-error" class="alert alert-danger" style="display:none;"></div>
+
+    <!-- CARD PRINCIPAL -->
+    <div class="rhub-card" id="card-gestao" style="max-width: 860px; margin: 0 auto; width: 100%;">
+      <div class="rhub-card__header">
+        <span class="rhub-card__title">
+          <i class="bi bi-calendar3-event"></i> Selecione o dia
+        </span>
+      </div>
+
+      <div class="card-body">
+
+        <!-- SELEÇÃO DE DATA -->
+        <div class="form-row form-row-single">
+          <div class="form-group">
+            <label class="label" for="data-selecao">
+              <i class="bi bi-calendar-date"></i> Data de referência
+            </label>
+            <input type="text" id="data-selecao" class="input" placeholder="DD/MM/AAAA">
+            <span class="form-hint">Formato armazenado no banco: YYYY-MM-DD</span>
+          </div>
+        </div>
+
+        <div class="form-actions" style="margin-top:0; padding-top:0; border-top:none;">
+          <button type="button" class="btn btn-primary" id="btn-checar">
+            <i class="bi bi-search"></i> Verificar registros
+          </button>
+        </div>
+
+        <!-- PAINEL DE CONTAGEM -->
+        <div id="painel-contagem" style="display:none; margin-top: 1.25rem;">
+          <div class="rhub-section-divider" role="separator" style="margin-top:0;">
+            <span class="rhub-section-divider__label">RESUMO DO DIA</span>
+          </div>
+
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:0.75rem; margin-top:0.75rem;">
+            <div class="t-kpi" data-level="verde">
+              <span class="t-kpi__label">Registros de Ponto</span>
+              <span class="t-kpi__value" id="count-ponto">0</span>
+              <span class="t-kpi__meta">ponto_historico</span>
+            </div>
+            <div class="t-kpi" data-level="ambar">
+              <span class="t-kpi__label">Desligamentos</span>
+              <span class="t-kpi__value" id="count-desligamentos">0</span>
+              <span class="t-kpi__meta">desligamentos_justificados</span>
+            </div>
+            <div class="t-kpi">
+              <span class="t-kpi__label">Colaboradores</span>
+              <span class="t-kpi__value" id="count-funcionarios">0</span>
+              <span class="t-kpi__meta">distintos no dia</span>
+            </div>
+          </div>
+
+          <div id="alerta-vazio" class="alert alert-warning" style="display:none;">
+            <i class="bi bi-exclamation-triangle-fill"></i>
+            Nenhum registro encontrado para esta data.
+          </div>
+
+          <!-- AÇÕES -->
+          <div class="form-actions">
+            <button type="button" class="btn btn-primary" id="btn-download" disabled>
+              <i class="bi bi-file-earmark-spreadsheet"></i> Baixar backup (.xlsx)
+            </button>
+            <button type="button" class="btn btn-danger" id="btn-excluir" disabled>
+              <i class="bi bi-trash3"></i> Excluir dados do dia
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </main>
+
+  <footer class="app-footer">
+    <small>OMEGA RHUB CT251 — Gestão de Dados Diários | Persistência SQLite | Expurgo definitivo com dupla confirmação</small>
+  </footer>
+
+  <!-- ============================================================
+       MODAL: DUPLA CONFIRMAÇÃO DE EXCLUSÃO
+       ============================================================ -->
+  <div class="modal modal-overlay" id="modal-confirmar-exclusao" role="dialog" aria-modal="true" aria-labelledby="confirmar-exclusao-title">
+    <div class="modal">
+      <div class="modal-header">
+        <h5 class="modal-title" id="confirmar-exclusao-title">
+          <i class="bi bi-exclamation-octagon-fill" style="color:var(--danger);"></i>
+          Exclusão permanente
+        </h5>
+        <button type="button" class="modal-close" id="btn-fechar-modal" aria-label="Fechar">
+          <i class="bi bi-x-lg"></i>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <div class="alert alert-danger" style="margin-top:0;">
+          <i class="bi bi-exclamation-triangle-fill"></i>
+          <strong>Atenção:</strong> esta ação não pode ser desfeita. Os registros abaixo serão
+          removidos permanentemente do banco SQLite:
+          <ul style="margin:0.5rem 0 0 1.1rem;">
+            <li><strong id="modal-data">—</strong></li>
+            <li><span id="modal-ponto">0</span> registro(s) de ponto</li>
+            <li><span id="modal-deslig">0</span> desligamento(s)</li>
+          </ul>
+        </div>
+
+        <div class="form-group" style="margin-top:1rem;">
+          <label class="label" for="confirmacao-texto">
+            Para confirmar, digite <code style="background:var(--gray-100); padding:0.1rem 0.4rem; border-radius:4px;">EXCLUIR</code> abaixo:
+          </label>
+          <input type="text" id="confirmacao-texto" class="input" placeholder="EXCLUIR" autocomplete="off">
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" id="btn-cancelar-exclusao">Cancelar</button>
+        <button type="button" class="btn btn-danger" id="btn-confirmar-exclusao" disabled>
+          <i class="bi bi-trash3"></i> Excluir definitivamente
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOASTS -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <script src="js/gerenciamento.js"></script>
+</body>
+</html>

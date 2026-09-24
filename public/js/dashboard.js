@@ -1,6 +1,11 @@
 (function () {
   'use strict';
 
+  // Base dinâmica da API: local vazio; hospedado (Render/GH Pages) aponta ao backend
+  var API_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    ? ''
+    : 'https://seu-backend.onrender.com';
+
   // Configurações Globais & Cores do Design System
   var CORES = {
     verde: '#10b981',
@@ -218,7 +223,7 @@
 
   function loadDatasDisponiveis() {
     showLoading();
-    fetch('/api/dashboard/datas-disponiveis')
+    fetch(API_URL + '/api/dashboard/datas-disponiveis')
       .then(function (res) { return res.json(); })
       .then(function (data) {
         if (!data.success || !data.datas || !data.datas.length) {
@@ -267,7 +272,7 @@
     }
     showLoading();
 
-    var url = '/api/dashboard/kpis?dataInicio=' + currentRange.inicio + '&dataFim=' + currentRange.fim;
+    var url = API_URL + '/api/dashboard/kpis?dataInicio=' + currentRange.inicio + '&dataFim=' + currentRange.fim;
     fetch(url)
       .then(function (res) { return res.json(); })
       .then(function (data) {
@@ -830,12 +835,9 @@
       if (txt) txt.textContent = iso.split('-').reverse().join('/');
     }
 
-    // No modo LocalStorage, recalcula direto; com servidor, refaz o fetch.
-    if (localStorageRecords && localStorageRecords.length) {
-      computeDashboardFromLocalStorage(localStorageRecords);
-    } else {
-      fetchDashboardData();
-    }
+    // Sempre busca do servidor; LocalStorage permanece apenas como
+    // fallback dentro de fetchDashboardData() (erro/vazio real).
+    fetchDashboardData();
   }
 
   function clearDayFilter() {
@@ -850,11 +852,7 @@
 
     updateSliderFromInputs();
 
-    if (localStorageRecords && localStorageRecords.length) {
-      computeDashboardFromLocalStorage(localStorageRecords);
-    } else {
-      fetchDashboardData();
-    }
+    fetchDashboardData();
   }
 
   function setupDayChip() {

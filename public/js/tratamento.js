@@ -1,6 +1,11 @@
 (function () {
   'use strict';
 
+  // Base dinâmica da API: local vazio; hospedado (Render/GH Pages) aponta ao backend
+  var API_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    ? ''
+    : 'https://seu-backend.onrender.com';
+
   var MAX_PREVIEW_ROWS = 50;
   var MAX_INCONS_ROWS = 200;
 
@@ -187,6 +192,15 @@
   var modalCorrecaoCancelar = document.getElementById('modal-correcao-cancelar');
   var modalCorrecaoSalvar = document.getElementById('modal-correcao-salvar');
 
+  // Limpeza inicial: remove resíduos de previews/testes antigos no navegador.
+  // A gravação só volta a ocorrer no sucesso do "Enviar para o BI".
+  try {
+    localStorage.removeItem('fDB_Ponto_Tratado');
+    localStorage.removeItem('omega_ponto_data');
+  } catch (e) {
+    console.warn('Erro ao limpar LocalStorage:', e);
+  }
+
   form.addEventListener('submit', handleSubmit);
   btnLimpar.addEventListener('click', handleLimpar);
   btnEnviarBi.addEventListener('click', handleEnviarBi);
@@ -285,7 +299,7 @@
     var formData = new FormData();
     formData.append('file_ponto', filePonto);
 
-    fetch('/api/tratamento/processar-arquivo', {
+    fetch(API_URL + '/api/tratamento/processar-arquivo', {
       method: 'POST',
       body: formData
     })
@@ -306,14 +320,6 @@
         }
         buildStateFromResponse(data);
         renderAll();
-        try {
-          if (dadosProcessados && dadosProcessados.length > 0) {
-            localStorage.setItem('fDB_Ponto_Tratado', JSON.stringify(dadosProcessados));
-            localStorage.setItem('omega_ponto_data', JSON.stringify(dadosProcessados));
-          }
-        } catch (e) {
-          console.warn('Erro ao salvar dados no LocalStorage:', e);
-        }
         if (data.preview && data.preview.previsaoAbsenteismo) {
           var elKpi = document.getElementById('kpi-absenteismo-preview');
           if (elKpi && dadosProcessados.length === 0) {
@@ -948,7 +954,7 @@
     var prevText = text.textContent;
     text.textContent = 'Enviando...';
 
-    fetch('/api/tratamento/confirmar-e-salvar', {
+    fetch(API_URL + '/api/tratamento/confirmar-e-salvar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ loteId: currentLoteId, justificativas: items, correcoes: correcoes })
@@ -961,6 +967,14 @@
       })
       .then(function (data) {
         if (!data.success) throw new Error(data.error);
+        try {
+          if (data.dadosGravados && data.dadosGravados.length > 0) {
+            localStorage.setItem('fDB_Ponto_Tratado', JSON.stringify(data.dadosGravados));
+            localStorage.setItem('omega_ponto_data', JSON.stringify(data.dadosGravados));
+          }
+        } catch (e) {
+          console.warn('Erro ao salvar dados confirmados no LocalStorage:', e);
+        }
         showSuccess(data.resumo);
       })
       .catch(function (err) {

@@ -4,18 +4,24 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
+const XLSX = require('xlsx');
+const { Pool } = require('pg');
 
 const { initDatabase, createLote, getLote, confirmLote,
   upsertPontoHistorico, insertDesligamentosJustificados, updateCalendario,
   getPontoHistorico, getDesligamentosHistorico, getCalendarioDatas,
-  getPeriodoLimites, getEfetivoTotal, getTurnoverCounts } = require('./src/database/dbService');
+  getPeriodoLimites, getEfetivoTotal, getTurnoverCounts,
+  countByDate, getByDate, deleteByDate, formatHorarioValue } = require('./src/database/dbService');
 
 const { parseExcelFiles, validateData, validatePontoRow, applyCorrecoes, toPontoDataShape, toDesligDataShape, calculateMetrics, formatExcelDate, excelDecimalToTime, STATUS_CONFIG, STATUS_ALIASES, getStatusMeta, calcularAbsenteismo, calcEfetivoAtivoPorMes, calcTurnoverMensal, calcTurnoverPorFuncao, META_TURNOVER_GERAL, META_TURNOVER_OPERACIONAL, MOTIVOS_TURNOVER_RELEVANTES } = require('./src/services/tratamentoService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-initDatabase();
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+});
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
@@ -41,7 +47,7 @@ const upload = multer({
 
 app.post('/api/tratamento/processar-arquivo', upload.fields([
   { name: 'file_ponto', maxCount: 1 }
-]), (req, res) => {
+]), async (req, res) => {
   try {
     if (!req.files || !req.files.file_ponto) {
       return res.status(400).json({
@@ -58,7 +64,7 @@ app.post('/api/tratamento/processar-arquivo', upload.fields([
     const { inconsistencias, validacaoInfo } = validateData(pontoData, desligamentoData);
 
     const payload = { pontoData, desligamentoData, parseInfo, demissoesPendentes };
-    const loteId = createLote(arquivoPontoNome, null, payload);
+    const loteId = await createLote(arquivoPontoNome, null, payload);
 
     const fmtHora = (v) => {
       if (!v) return null;
@@ -124,7 +130,7 @@ app.post('/api/tratamento/processar-arquivo', upload.fields([
   }
 });
 
-app.post('/api/tratamento/confirmar-e-salvar', express.json(), (req, res) => {
+app.post('/api/tratamento/confirmar-e-salvar', express.json(), async (req, res) => {
   try {
     const { loteId, justificativas, correcoes } = req.body;
 
@@ -135,7 +141,7 @@ app.post('/api/tratamento/confirmar-e-salvar', express.json(), (req, res) => {
       });
     }
 
-    const lote = getLote(loteId);
+    const lote = await getLote(loteId);
     if (!lote) {
       return res.status(404).json({ success: false, error: 'Lote não encontrado.' });
     }
@@ -198,7 +204,7 @@ app.post('/api/tratamento/confirmar-e-salvar', express.json(), (req, res) => {
       });
     }
 
-    const pontoResult = upsertPontoHistorico(pontoData, loteId);
+    const pontoResult = await upsertPontoHistorico(pontoData, loteId);
 
     const desligamentosParaSalvar = pendentes.map(p => {
       const j = justificativas.find(x => x.id === p.id);
@@ -213,14 +219,26 @@ app.post('/api/tratamento/confirmar-e-salvar', express.json(), (req, res) => {
         codigoMotivo: j.codigo
       };
     });
-    const desligResult = insertDesligamentosJustificados(desligamentosParaSalvar, loteId);
+    const desligResult = await insertDesligamentosJustificados(desligamentosParaSalvar, loteId);
 
     const datasTocadas = [
       ...new Set([...(pontoResult.datasTocadas || []), ...(desligResult.datasTocadas || [])])
     ];
-    updateCalendario(datasTocadas);
+    await updateCalendario(datasTocadas);
 
-    confirmLote(loteId);
+    await confirmLote(loteId);
+
+    const dadosGravados = pontoData.map(r => ({
+      matricula: r.matricula || '',
+      funcionario: r.nomeFuncionario || '',
+      funcao: r.nomeCargo || '',
+      dia: r.dia,
+      status: r.status || '',
+      cid: r.cid || '',
+      entrada1: formatHorarioValue(r.entrada1),
+      saida2: formatHorarioValue(r.saida2),
+      totalNormais: r.totalNormais || 0
+    }));
 
     return res.json({
       success: true,
@@ -233,7 +251,8 @@ app.post('/api/tratamento/confirmar-e-salvar', express.json(), (req, res) => {
         turnoverOperacional: desligamentosParaSalvar.filter(d => d.codigoMotivo !== 'reducao_quadro').length,
         reducaoQuadro: desligamentosParaSalvar.filter(d => d.codigoMotivo === 'reducao_quadro').length,
         datasAtualizadas: datasTocadas
-      }
+      },
+      dadosGravados
     });
   } catch (err) {
     console.error('Erro ao confirmar e salvar:', err);
@@ -244,10 +263,10 @@ app.post('/api/tratamento/confirmar-e-salvar', express.json(), (req, res) => {
   }
 });
 
-app.get('/api/dashboard/datas-disponiveis', (req, res) => {
+app.get('/api/dashboard/datas-disponiveis', async (req, res) => {
   try {
-    const datas = getCalendarioDatas();
-    const limites = getPeriodoLimites();
+    const datas = await getCalendarioDatas();
+    const limites = await getPeriodoLimites();
     return res.json({
       success: true,
       datas,
@@ -261,7 +280,7 @@ app.get('/api/dashboard/datas-disponiveis', (req, res) => {
   }
 });
 
-app.get('/api/dashboard/kpis', (req, res) => {
+app.get('/api/dashboard/kpis', async (req, res) => {
   try {
     const { dataInicio, dataFim } = req.query;
 
@@ -269,10 +288,10 @@ app.get('/api/dashboard/kpis', (req, res) => {
       return res.status(400).json({ success: false, error: 'Parâmetros dataInicio e dataFim são obrigatórios.' });
     }
 
-    const pontoRows = getPontoHistorico(dataInicio, dataFim);
-    const desligRows = getDesligamentosHistorico(dataInicio, dataFim);
-    const efetivoTotal = getEfetivoTotal(dataInicio, dataFim);
-    const turnoverCounts = getTurnoverCounts(dataInicio, dataFim);
+    const pontoRows = await getPontoHistorico(dataInicio, dataFim);
+    const desligRows = await getDesligamentosHistorico(dataInicio, dataFim);
+    const efetivoTotal = await getEfetivoTotal(dataInicio, dataFim);
+    const turnoverCounts = await getTurnoverCounts(dataInicio, dataFim);
 
     const pontoData = toPontoDataShape(pontoRows);
     const desligData = toDesligDataShape(desligRows);
@@ -339,7 +358,82 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-app.listen(PORT, () => {
-  console.log(`Omega Metrics v2 rodando em http://localhost:${PORT}`);
-  console.log('Banco de dados: SQLite (data/omega.db)');
+/* ============================================================
+   GESTÃO / EXPURGO DE DADOS DIÁRIOS
+   ============================================================ */
+
+app.get('/api/dados/checar', async (req, res) => {
+  try {
+    const { data } = req.query;
+    const counts = await countByDate(data);
+    return res.json({
+      success: true,
+      data,
+      ponto: counts.ponto,
+      desligamentos: counts.desligamentos,
+      funcionarios: counts.funcionarios,
+      total: counts.ponto + counts.desligamentos
+    });
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({ success: false, error: err.message });
+  }
 });
+
+app.get('/api/dados/download', async (req, res) => {
+  try {
+    const { data } = req.query;
+    const { ponto, desligamentos } = await getByDate(data);
+
+    if (ponto.length === 0 && desligamentos.length === 0) {
+      return res.status(404).json({ success: false, error: 'Nenhum registro encontrado para esta data.' });
+    }
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.json_to_sheet(ponto),
+      'Ponto'
+    );
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.json_to_sheet(desligamentos.length ? desligamentos : [{ aviso: 'Sem desligamentos nesta data' }]),
+      'Desligamentos'
+    );
+
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="backup_dados_${data}.xlsx"`);
+    res.setHeader('Content-Length', buf.length);
+    return res.send(buf);
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({ success: false, error: err.message });
+  }
+});
+
+app.delete('/api/dados/deletar', async (req, res) => {
+  try {
+    const { data } = req.query;
+    const result = await deleteByDate(data);
+    console.log(`[EXPURGO] ${data} — ponto: ${result.ponto}, desligamentos: ${result.desligamentos}`);
+    return res.json({ success: true, data, removidos: result });
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({ success: false, error: err.message });
+  }
+});
+
+async function start() {
+  try {
+    await initDatabase(pool);
+    console.log('Conectado ao PostgreSQL (Neon) — schema verificado.');
+  } catch (err) {
+    console.error('Falha ao conectar/inicializar o PostgreSQL:', err.message);
+    process.exit(1);
+  }
+
+  app.listen(PORT, () => {
+    console.log(`Omega Metrics v2 rodando em http://localhost:${PORT}`);
+    console.log('Banco de dados: PostgreSQL (Neon)');
+  });
+}
+
+start();

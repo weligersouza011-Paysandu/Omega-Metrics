@@ -1,38 +1,36 @@
-const { DatabaseSync } = require('node:sqlite');
-const fs = require('fs');
-const path = require('path');
+const { types } = require('pg');
 
-const DB_DIR = path.join(__dirname, '..', '..', 'data');
-const DB_PATH = path.join(DB_DIR, 'omega.db');
+// COUNT(*) retorna int8 — padroniza como Number para manter a matemática dos KPIs
+types.setTypeParser(20, (val) => parseInt(val, 10));
 
-let db;
+let pool = null;
 
-function initDatabase() {
-  if (!fs.existsSync(DB_DIR)) {
-    fs.mkdirSync(DB_DIR, { recursive: true });
-  }
-  db = new DatabaseSync(DB_PATH);
-  db.exec('PRAGMA journal_mode = WAL');
-  db.exec('PRAGMA foreign_keys = ON');
-  createTables();
-  seedMotivosDesligamento();
-  return db;
+function initDatabase(pgPool) {
+  pool = pgPool;
+  return createSchema().then(() => seedMotivosDesligamento());
 }
 
-function withTransaction(fn) {
-  db.exec('BEGIN');
+function getPool() {
+  return pool;
+}
+
+async function withTransaction(fn) {
+  const client = await pool.connect();
   try {
-    const result = fn();
-    db.exec('COMMIT');
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
     return result;
   } catch (err) {
-    db.exec('ROLLBACK');
+    await client.query('ROLLBACK');
     throw err;
+  } finally {
+    client.release();
   }
 }
 
-function createTables() {
-  db.exec(`
+async function createSchema() {
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS lotes_importacao (
       id TEXT PRIMARY KEY,
       status TEXT NOT NULL DEFAULT 'pendente',
@@ -45,7 +43,7 @@ function createTables() {
     );
 
     CREATE TABLE IF NOT EXISTS ponto_historico (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       data_registro TEXT NOT NULL,
       chave_funcionario TEXT NOT NULL,
       nome_funcionario TEXT NOT NULL,
@@ -70,7 +68,7 @@ function createTables() {
     CREATE INDEX IF NOT EXISTS idx_ponto_funcionario ON ponto_historico(chave_funcionario);
 
     CREATE TABLE IF NOT EXISTS desligamentos_justificados (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       data_desligamento TEXT NOT NULL,
       chave_funcionario TEXT NOT NULL,
       nome_funcionario TEXT NOT NULL,
@@ -99,25 +97,13 @@ function createTables() {
       desligamentos INTEGER DEFAULT 0
     );
   `);
-  ensureColumn('ponto_historico', 'cid', 'cid TEXT');
+  await pool.query('ALTER TABLE ponto_historico ADD COLUMN IF NOT EXISTS cid TEXT');
 }
 
-function ensureColumn(table, column, ddl) {
-  try {
-    const cols = db.prepare(`PRAGMA table_info(${table})`).all();
-    if (!cols.some(c => c.name === column)) {
-      db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
-    }
-  } catch (err) {
-    console.warn(`Aviso ao garantir coluna ${table}.${column}:`, err.message);
-  }
-}
+async function seedMotivosDesligamento() {
+  const countResult = await pool.query('SELECT COUNT(*) as c FROM motivos_desligamento');
+  if (countResult.rows[0].c > 0) return;
 
-function seedMotivosDesligamento() {
-  const count = db.prepare('SELECT COUNT(*) as c FROM motivos_desligamento').get().c;
-  if (count > 0) return;
-
-  const insert = db.prepare('INSERT INTO motivos_desligamento (codigo, label, conta_turnover) VALUES (?, ?, ?)');
   const motivos = [
     ['absenteismo', 'Excesso de Atestados / Absenteísmo', 1],
     ['baixa_produtividade', 'Baixa Produtividade', 1],
@@ -125,8 +111,13 @@ function seedMotivosDesligamento() {
     ['pedido_demissao', 'Pedido de Demissão pelo Colaborador', 1],
     ['reducao_quadro', 'Redução de Quadro / Desmobilização do Cliente', 0]
   ];
-  withTransaction(() => {
-    for (const m of motivos) insert.run(...m);
+  await withTransaction(async (client) => {
+    for (const m of motivos) {
+      await client.query(
+        'INSERT INTO motivos_desligamento (codigo, label, conta_turnover) VALUES ($1, $2, $3) ON CONFLICT (codigo) DO NOTHING',
+        m
+      );
+    }
   });
 }
 
@@ -184,39 +175,42 @@ function formatHorarioValue(v) {
   return null;
 }
 
-function createLote(arquivoPonto, arquivoDeslig, payload) {
+async function createLote(arquivoPonto, arquivoDeslig, payload) {
   const loteId = generateLoteId();
-  db.prepare(`
+  await pool.query(`
     INSERT INTO lotes_importacao (id, arquivo_ponto, arquivo_deslig, payload_json, registros_lidos, criado_em)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(
+    VALUES ($1, $2, $3, $4, $5, $6)
+  `, [
     loteId,
     arquivoPonto,
     arquivoDeslig || null,
     JSON.stringify(payload),
     (payload.pontoData && payload.pontoData.length) || 0,
     nowIso()
-  );
+  ]);
   return loteId;
 }
 
-function getLote(loteId) {
-  return db.prepare('SELECT * FROM lotes_importacao WHERE id = ?').get(loteId);
+async function getLote(loteId) {
+  const result = await pool.query('SELECT * FROM lotes_importacao WHERE id = $1', [loteId]);
+  return result.rows[0];
 }
 
-function confirmLote(loteId) {
-  db.prepare('UPDATE lotes_importacao SET status = ?, confirmado_em = ? WHERE id = ?')
-    .run('confirmado', nowIso(), loteId);
+async function confirmLote(loteId) {
+  await pool.query(
+    'UPDATE lotes_importacao SET status = $1, confirmado_em = $2 WHERE id = $3',
+    ['confirmado', nowIso(), loteId]
+  );
 }
 
-function upsertPontoHistorico(registros, loteId) {
-  const stmt = db.prepare(`
+async function upsertPontoHistorico(registros, loteId) {
+  const upsertSql = `
     INSERT INTO ponto_historico (
       data_registro, chave_funcionario, nome_funcionario, cargo, departamento,
       entrada1, saida2, total_normais, adicional_noturno, dia_falta,
       horas_atraso, falta_e_atraso, atestado, extra50, status, cid,
       lote_id, atualizado_em
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
     ON CONFLICT(data_registro, chave_funcionario) DO UPDATE SET
       nome_funcionario = excluded.nome_funcionario,
       cargo = excluded.cargo,
@@ -234,12 +228,9 @@ function upsertPontoHistorico(registros, loteId) {
       cid = excluded.cid,
       lote_id = excluded.lote_id,
       atualizado_em = excluded.atualizado_em
-  `);
-  const existsStmt = db.prepare(
-    'SELECT 1 FROM ponto_historico WHERE data_registro = ? AND chave_funcionario = ?'
-  );
+  `;
 
-  return withTransaction(() => {
+  return withTransaction(async (client) => {
     let inseridos = 0;
     let atualizados = 0;
     let pulados = 0;
@@ -252,9 +243,13 @@ function upsertPontoHistorico(registros, loteId) {
         continue;
       }
       const chave = normalizeFuncionarioKey(r.nomeFuncionario, r.matricula);
-      const existed = !!existsStmt.get(dataRegistro, chave);
+      const existsResult = await client.query(
+        'SELECT 1 FROM ponto_historico WHERE data_registro = $1 AND chave_funcionario = $2',
+        [dataRegistro, chave]
+      );
+      const existed = existsResult.rowCount > 0;
 
-      stmt.run(
+      await client.query(upsertSql, [
         dataRegistro,
         chave,
         r.nomeFuncionario || '',
@@ -273,7 +268,7 @@ function upsertPontoHistorico(registros, loteId) {
         (r.cid && String(r.cid).trim()) ? String(r.cid).trim() : null,
         loteId,
         nowIso()
-      );
+      ]);
 
       if (existed) atualizados++;
       else inseridos++;
@@ -284,13 +279,13 @@ function upsertPontoHistorico(registros, loteId) {
   });
 }
 
-function insertDesligamentosJustificados(desligamentos, loteId) {
-  const stmt = db.prepare(`
+async function insertDesligamentosJustificados(desligamentos, loteId) {
+  const upsertSql = `
     INSERT INTO desligamentos_justificados (
       data_desligamento, chave_funcionario, nome_funcionario, cargo, departamento,
       campo_detectado, valor_original, justificativa_rh, conta_turnover,
       lote_id, criado_em
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
     ON CONFLICT(data_desligamento, chave_funcionario) DO UPDATE SET
       nome_funcionario = excluded.nome_funcionario,
       cargo = excluded.cargo,
@@ -301,21 +296,24 @@ function insertDesligamentosJustificados(desligamentos, loteId) {
       conta_turnover = excluded.conta_turnover,
       lote_id = excluded.lote_id,
       criado_em = excluded.criado_em
-  `);
-  const motivoStmt = db.prepare('SELECT conta_turnover FROM motivos_desligamento WHERE codigo = ?');
+  `;
 
-  return withTransaction(() => {
+  return withTransaction(async (client) => {
     let count = 0;
     const datasTocadas = new Set();
 
     for (const d of desligamentos) {
-      const motivo = motivoStmt.get(d.codigoMotivo);
+      const motivoResult = await client.query(
+        'SELECT conta_turnover FROM motivos_desligamento WHERE codigo = $1',
+        [d.codigoMotivo]
+      );
+      const motivo = motivoResult.rows[0];
       const contaTurnover = motivo ? motivo.conta_turnover : 1;
       const dataDeslig = normalizeDate(d.dia) || normalizeDate(d.data_desligamento);
       if (!dataDeslig) continue;
       const chave = normalizeFuncionarioKey(d.nomeFuncionario, d.matricula);
 
-      stmt.run(
+      await client.query(upsertSql, [
         dataDeslig,
         chave,
         d.nomeFuncionario || '',
@@ -327,7 +325,7 @@ function insertDesligamentosJustificados(desligamentos, loteId) {
         contaTurnover,
         loteId,
         nowIso()
-      );
+      ]);
       count++;
       datasTocadas.add(dataDeslig);
     }
@@ -336,85 +334,150 @@ function insertDesligamentosJustificados(desligamentos, loteId) {
   });
 }
 
-function updateCalendario(datas) {
-  const upsert = db.prepare(`
-    INSERT INTO calendario_datas (data, registros_ponto, desligamentos)
-    VALUES (?, ?, ?)
-    ON CONFLICT(data) DO UPDATE SET
-      registros_ponto = excluded.registros_ponto,
-      desligamentos = excluded.desligamentos
-  `);
-  const countPonto = db.prepare('SELECT COUNT(*) as c FROM ponto_historico WHERE data_registro = ?');
-  const countDeslig = db.prepare('SELECT COUNT(*) as c FROM desligamentos_justificados WHERE data_desligamento = ?');
-
-  return withTransaction(() => {
+async function updateCalendario(datas) {
+  return withTransaction(async (client) => {
     const unicas = [...new Set(datas.filter(Boolean))];
     for (const data of unicas) {
-      const p = countPonto.get(data).c;
-      const d = countDeslig.get(data).c;
-      upsert.run(data, p, d);
+      const pResult = await client.query(
+        'SELECT COUNT(*) as c FROM ponto_historico WHERE data_registro = $1', [data]
+      );
+      const dResult = await client.query(
+        'SELECT COUNT(*) as c FROM desligamentos_justificados WHERE data_desligamento = $1', [data]
+      );
+      await client.query(`
+        INSERT INTO calendario_datas (data, registros_ponto, desligamentos)
+        VALUES ($1, $2, $3)
+        ON CONFLICT(data) DO UPDATE SET
+          registros_ponto = excluded.registros_ponto,
+          desligamentos = excluded.desligamentos
+      `, [data, pResult.rows[0].c, dResult.rows[0].c]);
     }
     return unicas.length;
   });
 }
 
-function getPontoHistorico(dataInicio, dataFim) {
-  return db.prepare(`
+async function getPontoHistorico(dataInicio, dataFim) {
+  const result = await pool.query(`
     SELECT * FROM ponto_historico
-    WHERE data_registro BETWEEN ? AND ?
+    WHERE data_registro BETWEEN $1 AND $2
     ORDER BY data_registro, nome_funcionario
-  `).all(dataInicio, dataFim);
+  `, [dataInicio, dataFim]);
+  return result.rows;
 }
 
-function getDesligamentosHistorico(dataInicio, dataFim) {
-  return db.prepare(`
+async function getDesligamentosHistorico(dataInicio, dataFim) {
+  const result = await pool.query(`
     SELECT * FROM desligamentos_justificados
-    WHERE data_desligamento BETWEEN ? AND ?
+    WHERE data_desligamento BETWEEN $1 AND $2
     ORDER BY data_desligamento, nome_funcionario
-  `).all(dataInicio, dataFim);
+  `, [dataInicio, dataFim]);
+  return result.rows;
 }
 
-function getCalendarioDatas() {
-  return db.prepare(`
+async function getCalendarioDatas() {
+  const result = await pool.query(`
     SELECT data, registros_ponto, desligamentos
     FROM calendario_datas
     ORDER BY data
-  `).all();
+  `);
+  return result.rows;
 }
 
-function getPeriodoLimites() {
-  const min = db.prepare('SELECT MIN(data_registro) as min FROM ponto_historico').get();
-  const max = db.prepare('SELECT MAX(data_registro) as max FROM ponto_historico').get();
-  return { min: min && min.min ? min.min : null, max: max && max.max ? max.max : null };
+function isValidDate(data) {
+  return typeof data === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(data);
 }
 
-function getEfetivoTotal(dataInicio, dataFim) {
-  const row = db.prepare(`
+function invalidDateError() {
+  const err = new Error('Data inválida. Use o formato YYYY-MM-DD.');
+  err.statusCode = 400;
+  return err;
+}
+
+async function countByDate(data) {
+  if (!isValidDate(data)) throw invalidDateError();
+  const pontoResult = await pool.query(
+    'SELECT COUNT(*) as c FROM ponto_historico WHERE data_registro = $1', [data]
+  );
+  const desligResult = await pool.query(
+    'SELECT COUNT(*) as c FROM desligamentos_justificados WHERE data_desligamento = $1', [data]
+  );
+  const funcsResult = await pool.query(
+    'SELECT COUNT(DISTINCT chave_funcionario) as c FROM ponto_historico WHERE data_registro = $1', [data]
+  );
+  return {
+    ponto: pontoResult.rows[0].c,
+    desligamentos: desligResult.rows[0].c,
+    funcionarios: funcsResult.rows[0].c
+  };
+}
+
+async function getByDate(data) {
+  if (!isValidDate(data)) throw invalidDateError();
+  const ponto = await pool.query(
+    'SELECT * FROM ponto_historico WHERE data_registro = $1 ORDER BY nome_funcionario', [data]
+  );
+  const desligamentos = await pool.query(
+    'SELECT * FROM desligamentos_justificados WHERE data_desligamento = $1 ORDER BY nome_funcionario', [data]
+  );
+  return { ponto: ponto.rows, desligamentos: desligamentos.rows };
+}
+
+async function deleteByDate(data) {
+  if (!isValidDate(data)) throw invalidDateError();
+  return withTransaction(async (client) => {
+    const ponto = await client.query('DELETE FROM ponto_historico WHERE data_registro = $1', [data]);
+    const deslig = await client.query(
+      'DELETE FROM desligamentos_justificados WHERE data_desligamento = $1', [data]
+    );
+    const restantePonto = await client.query(
+      'SELECT COUNT(*) as c FROM ponto_historico WHERE data_registro = $1', [data]
+    );
+    const restanteDeslig = await client.query(
+      'SELECT COUNT(*) as c FROM desligamentos_justificados WHERE data_desligamento = $1', [data]
+    );
+    if (restantePonto.rows[0].c === 0 && restanteDeslig.rows[0].c === 0) {
+      await client.query('DELETE FROM calendario_datas WHERE data = $1', [data]);
+    }
+    return { ponto: ponto.rowCount, desligamentos: deslig.rowCount };
+  });
+}
+
+async function getPeriodoLimites() {
+  const result = await pool.query(
+    'SELECT MIN(data_registro) as min, MAX(data_registro) as max FROM ponto_historico'
+  );
+  const row = result.rows[0];
+  return { min: row.min || null, max: row.max || null };
+}
+
+async function getEfetivoTotal(dataInicio, dataFim) {
+  const result = await pool.query(`
     SELECT COUNT(DISTINCT chave_funcionario) as total
     FROM ponto_historico
-    WHERE data_registro BETWEEN ? AND ?
-  `).get(dataInicio, dataFim);
-  return (row && row.total) || 0;
+    WHERE data_registro BETWEEN $1 AND $2
+  `, [dataInicio, dataFim]);
+  return result.rows[0].total || 0;
 }
 
-function getTurnoverCounts(dataInicio, dataFim) {
-  const rows = db.prepare(`
+async function getTurnoverCounts(dataInicio, dataFim) {
+  const result = await pool.query(`
     SELECT conta_turnover, COUNT(*) as qtd
     FROM desligamentos_justificados
-    WHERE data_desligamento BETWEEN ? AND ?
+    WHERE data_desligamento BETWEEN $1 AND $2
     GROUP BY conta_turnover
-  `).all(dataInicio, dataFim);
-  const result = { operacional: 0, reducao: 0 };
-  for (const r of rows) {
-    if (r.conta_turnover === 1) result.operacional = r.qtd;
-    else result.reducao = r.qtd;
+  `, [dataInicio, dataFim]);
+  const counts = { operacional: 0, reducao: 0 };
+  for (const r of result.rows) {
+    if (r.conta_turnover === 1) counts.operacional = r.qtd;
+    else counts.reducao = r.qtd;
   }
-  return result;
+  return counts;
 }
 
 module.exports = {
   initDatabase,
-  getDb: () => db,
+  getPool,
+  getDb: () => pool,
   createLote,
   getLote,
   confirmLote,
@@ -425,6 +488,10 @@ module.exports = {
   getDesligamentosHistorico,
   getCalendarioDatas,
   getPeriodoLimites,
+  countByDate,
+  getByDate,
+  deleteByDate,
+  isValidDate,
   getEfetivoTotal,
   getTurnoverCounts,
   normalizeDate,

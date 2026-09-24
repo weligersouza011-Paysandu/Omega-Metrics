@@ -9,6 +9,7 @@ data/*.db-shm
 data/*.db-wal
 data/*.bak_*
 data/*.json
+data/backup_omega_*/
 
 .DS_Store
 Thumbs.db
