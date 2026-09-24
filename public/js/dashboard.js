@@ -23,6 +23,7 @@
   var META_ABSENTEISMO = 3.0;
   var LIMITE_ALERTA = 4.0;
   var GAUGE_MAX = 6.0;
+  var CAL_PAGE_MONTHS = 8;
   var TOP_RANKING = 10;
   var META_TURNOVER_GERAL = 5.0;
   var META_TURNOVER_OPERACIONAL = 3.0;
@@ -43,6 +44,8 @@
   var dayFilter = null;
   var periodBeforeDayFilter = null;
   var suppressSliderChange = false;
+  var statusFilter = null;
+  var inflightCtrl = null;
 
   var funcaoExpanded = false;
   var lastFuncaoData = null;
@@ -71,6 +74,14 @@
     if (initialized) return;
     initialized = true;
 
+    // Datalabels: desligado por padrão — só a Rosca de Justificativas
+    // liga em suas opções (protege contra auto-registro do plugin).
+    try {
+      if (typeof Chart !== 'undefined' && typeof ChartDataLabels !== 'undefined' && Chart.defaults) {
+        Chart.defaults.set('datalabels', { display: false });
+      }
+    } catch (e) { /* ignore */ }
+
     try {
       renderDataPorExtenso();
       setupDrawer();
@@ -81,6 +92,7 @@
       setupRankExpand();
       setupDigitalTurnover();
       setupDayChip();
+      setupStatusChip();
       setupExportPdf();
     } catch (e) {
       console.error('Erro durante o setup do dashboard (renderização segue):', e);
@@ -127,12 +139,31 @@
     }
   }
 
-  function getContainerCanvas(containerId, canvasId) {
-    var container = document.getElementById(containerId);
-    if (!container) return null;
-    destroyChart(containerId);
+  // Atualização in-place: reutiliza a instância Chart.js existente (data +
+  // options + update) em vez de destruir/recriar o canvas a cada render.
+  // `meta` é um objeto livre lido pelos plugins custom via chart.$meta.
+  function updateChart(id, canvasId, config, meta) {
+    var inst = chartInstances[id];
+    if (inst && inst.canvas && inst.canvas.parentNode) {
+      inst.data = config.data;
+      inst.options = config.options;
+      inst.$meta = meta;
+      inst.update();
+      return inst;
+    }
+
+    if (inst) destroyChart(id);
+
+    var container = document.getElementById(id);
+    if (!container || typeof Chart === 'undefined') return null;
     container.innerHTML = '<canvas id="' + canvasId + '"></canvas>';
-    return document.getElementById(canvasId);
+    var canvas = document.getElementById(canvasId);
+    if (!canvas) return null;
+
+    inst = new Chart(canvas, config);
+    inst.$meta = meta;
+    chartInstances[id] = inst;
+    return inst;
   }
 
   function placeholderVazio() {
@@ -265,25 +296,47 @@
     showEmpty();
   }
 
-  function fetchDashboardData() {
+  function fetchDashboardData(opts) {
+    opts = opts || {};
     if (!currentRange.inicio || !currentRange.fim) {
       tryLocalStorageFallback();
       return;
     }
-    showLoading();
+
+    var background = !!opts.background;
+    if (background) {
+      // Atualização leve: mantém o grid visível (sem spinner full-screen)
+      if (gridEl) gridEl.classList.add('is-refreshing');
+    } else {
+      showLoading();
+    }
+
+    // Aborta a busca anterior — cliques rápidos não acumulam requisições
+    if (inflightCtrl) {
+      try { inflightCtrl.abort(); } catch (e) { /* ignore */ }
+    }
+    var ctrl = new AbortController();
+    inflightCtrl = ctrl;
 
     var url = API_URL + '/api/dashboard/kpis?dataInicio=' + currentRange.inicio + '&dataFim=' + currentRange.fim;
-    fetch(url)
+    if (statusFilter) url += '&status=' + encodeURIComponent(statusFilter);
+
+    fetch(url, { signal: ctrl.signal })
       .then(function (res) { return res.json(); })
       .then(function (data) {
+        if (inflightCtrl === ctrl) inflightCtrl = null;
+        if (gridEl) gridEl.classList.remove('is-refreshing');
         if (!data.success || data.semDados) {
-          tryLocalStorageFallback();
+          if (!background) tryLocalStorageFallback();
           return;
         }
         showGrid();
-        renderDashboard(data);
+        renderDashboard(data, opts);
       })
       .catch(function (err) {
+        if (err && err.name === 'AbortError') return;
+        if (inflightCtrl === ctrl) inflightCtrl = null;
+        if (gridEl) gridEl.classList.remove('is-refreshing');
         console.warn('Erro ao buscar KPIs do servidor, acionando fallback LocalStorage:', err);
         tryLocalStorageFallback();
       });
@@ -540,8 +593,9 @@
      4. RENDERIZADOR PRINCIPAL DO DASHBOARD
      ============================================================ */
 
-  function renderDashboard(data) {
+  function renderDashboard(data, opts) {
     if (!data) return;
+    opts = opts || {};
     var k = data.kpis || {};
     var g = data.graficos || {};
 
@@ -549,10 +603,16 @@
     renderGauge(k.absenteismo ? k.absenteismo.percentual : 0);
     renderMotivos(g.absenteismoPorStatus || []);
 
-    // 2. Calendário de Absenteísmo
-    mapPorDia = {};
-    (g.absenteismoPorDia || []).forEach(function (d) { mapPorDia[d.data] = d; });
-    renderCalendario();
+    // 2. Calendário de Absenteísmo — o merge (sem reset) preserva as cores
+    //    dos dias do período. Com filtros de dia/status ativos, os dados
+    //    vêm parciais: não se mexe no calendário (só sincroniza seleção).
+    if (!opts.dayFilterChange && !opts.statusFilterChange) {
+      (g.absenteismoPorDia || []).forEach(function (d) { mapPorDia[d.data] = d; });
+      renderCalendario();
+    } else {
+      // Filtro rápido: não reconstrói o DOM — só sincroniza a seleção
+      setCalSelectedDay(dayFilter);
+    }
 
     // 3. Linha Inferior de Absenteísmo
     renderRanking(g.absenteismoPorFuncionario || []);
@@ -573,21 +633,106 @@
      5. CARDS DE ABSENTEÍSMO
      ============================================================ */
 
-  // BLOCO 1: VELOCÍMETRO (SPEEDOMETER GAUGE)
+  // BLOCO 1: VELOCÍMETRO (GAUGE CHART COM FAIXAS E PONTEIRO)
+  // Plugin desenhado à mão: ponteiro + valor + rótulo + destaque da Meta.
+  // Lê o estado atual de chart.$meta a cada draw (viaza update in-place).
+  var gaugeOverlayPlugin = {
+    id: 'gaugeOverlay',
+    afterDatasetsDraw: function (chart) {
+      var m = chart.$meta;
+      if (!m) return;
+      var meta0 = chart.getDatasetMeta(0);
+      if (!meta0 || !meta0.data || !meta0.data.length) return;
+
+      var first = meta0.data[0];
+      var last = meta0.data[meta0.data.length - 1];
+      var start = first.startAngle;
+      var end = last.endAngle;
+      var t = Math.max(0, Math.min(1, m.max > 0 ? m.value / m.max : 0));
+      var angle = start + (end - start) * t;
+
+      var cx = first.x;
+      var cy = first.y;
+      var outer = Math.max(first.innerRadius, first.outerRadius);
+      var tipX = cx + Math.cos(angle) * (outer - 4);
+      var tipY = cy + Math.sin(angle) * (outer - 4);
+      var tailX = cx - Math.cos(angle) * 12;
+      var tailY = cy - Math.sin(angle) * 12;
+
+      var ctx = chart.ctx;
+      ctx.save();
+
+      // Ponteiro com contorno branco (contraste sobre as faixas coloridas)
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.moveTo(tailX, tailY);
+      ctx.lineTo(tipX, tipY);
+      ctx.stroke();
+      ctx.strokeStyle = '#0f172a';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(tailX, tailY);
+      ctx.lineTo(tipX, tipY);
+      ctx.stroke();
+
+      // Cuba central
+      ctx.beginPath();
+      ctx.arc(cx, cy, 7, 0, Math.PI * 2);
+      ctx.fillStyle = '#0f172a';
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#ffffff';
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+
+      // Valor + rótulo + Meta em destaque
+      var width = chart.width;
+      var height = chart.height;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      ctx.font = '800 1.45rem Inter, sans-serif';
+      ctx.fillStyle = m.color;
+      ctx.fillText(pctBr(m.value), width / 2, height * 0.70);
+
+      ctx.font = '600 0.68rem Inter, sans-serif';
+      ctx.fillStyle = '#64748b';
+      ctx.fillText('Média Geral', width / 2, height * 0.83);
+
+      ctx.font = '700 0.62rem Inter, sans-serif';
+      ctx.fillStyle = CORES.verde;
+      ctx.fillText('Meta ' + pctBr(META_ABSENTEISMO), width / 2, height * 0.955);
+
+      ctx.restore();
+    }
+  };
+
   function renderGauge(val) {
-    var canvas = getContainerCanvas('gauge-container', 'gauge-absenteismo');
-    if (!canvas || typeof Chart === 'undefined') return;
-
     var numVal = Number(val) || 0;
-    var resto = Math.max(0, GAUGE_MAX - numVal);
-    var corPonteiro = numVal > LIMITE_ALERTA ? CORES.vermelho : (numVal > META_ABSENTEISMO ? CORES.ambar : CORES.verde);
+    // Escala dinâmica: nunca abaixo de 0–6%, estende para acomodar o valor
+    var gaugeMax = Math.max(GAUGE_MAX, Math.ceil(numVal));
+    var clamped = Math.max(0, Math.min(numVal, gaugeMax));
+    var corPonteiro = clamped > LIMITE_ALERTA ? CORES.vermelho
+      : (clamped > META_ABSENTEISMO ? CORES.ambar : CORES.verde);
 
-    chartInstances['gauge-container'] = new Chart(canvas, {
+    // Faixas: Verde 0–3 (Meta) · Amarelo 3–4 (Atenção) · Vermelho >4
+    var bands = [
+      META_ABSENTEISMO,
+      LIMITE_ALERTA - META_ABSENTEISMO,
+      Math.max(0.01, gaugeMax - LIMITE_ALERTA)
+    ];
+
+    var config = {
       type: 'doughnut',
       data: {
         datasets: [{
-          data: [numVal, resto],
-          backgroundColor: [corPonteiro, CORES.pista],
+          data: bands,
+          backgroundColor: [CORES.verde, CORES.ambar, CORES.vermelho],
           borderWidth: 0
         }]
       },
@@ -596,63 +741,104 @@
         maintainAspectRatio: false,
         rotation: 270,
         circumference: 180,
-        cutout: '75%',
+        cutout: '74%',
         plugins: {
           legend: { display: false },
-          tooltip: { enabled: false }
+          tooltip: { enabled: false },
+          datalabels: { display: false }
         }
       },
-      plugins: [{
-        id: 'gaugeText',
-        afterDraw: function (chart) {
-          var ctx = chart.ctx;
-          var width = chart.width;
-          var height = chart.height;
+      plugins: [gaugeOverlayPlugin]
+    };
 
-          ctx.save();
-          ctx.font = '800 1.5rem Inter, sans-serif';
-          ctx.fillStyle = corPonteiro;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(pctBr(numVal), width / 2, height / 1.4);
-
-          ctx.font = '600 0.72rem Inter, sans-serif';
-          ctx.fillStyle = '#64748b';
-          ctx.fillText('Média Geral', width / 2, height / 1.18);
-          ctx.restore();
-        }
-      }]
+    updateChart('gauge-container', 'gauge-absenteismo', config, {
+      value: numVal,
+      clamped: clamped,
+      max: gaugeMax,
+      color: corPonteiro
     });
+
+    var foot = document.getElementById('gauge-foot');
+    if (foot) {
+      foot.textContent = 'Escala 0,00% – ' + gaugeMax.toFixed(2).replace('.', ',') +
+        '% · Meta ' + pctBr(META_ABSENTEISMO);
+    }
   }
 
   // BLOCO 2: ROSCA DE JUSTIFICATIVAS (AMPLIADA)
+  // Plugin do total central (lê chart.$meta; suporta filtro de status)
+  var donutCenterPlugin = {
+    id: 'donutCenter',
+    afterDraw: function (chart) {
+      var m = chart.$meta;
+      if (!m) return;
+      var area = chart.chartArea;
+      if (!area) return;
+
+      var ctx = chart.ctx;
+      var cx = (area.left + area.right) / 2;
+      var cy = (area.top + area.bottom) / 2;
+
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      ctx.font = '800 1.35rem Inter, sans-serif';
+      ctx.fillStyle = '#0f172a';
+      ctx.fillText(String(m.total), cx, cy - 8);
+
+      ctx.font = '600 0.66rem Inter, sans-serif';
+      ctx.fillStyle = '#64748b';
+      ctx.fillText(m.filteredLabel || 'ocorrências', cx, cy + 12);
+      ctx.restore();
+    }
+  };
+
   function renderMotivos(rows) {
     var container = document.getElementById('chart-motivos');
     if (!container) return;
-    var canvas = getContainerCanvas('chart-motivos', 'canvas-motivos');
-    if (!canvas || typeof Chart === 'undefined') return;
     if (!rows || !rows.length) {
+      destroyChart('chart-motivos');
       container.innerHTML = placeholderVazio();
       return;
     }
 
     var paletaMotivos = [CORES.vinho, CORES.vermelho, CORES.ambar, CORES.verde, CORES.roxo, CORES.azul, CORES.cinza];
+    var total = rows.reduce(function (s, d) { return s + (Number(d.value) || 0); }, 0);
 
-    chartInstances['chart-motivos'] = new Chart(canvas, {
+    var plugins = [donutCenterPlugin];
+    if (typeof ChartDataLabels !== 'undefined') plugins.push(ChartDataLabels);
+
+    var config = {
       type: 'doughnut',
       data: {
         labels: rows.map(function (d) { return d.label; }),
         datasets: [{
           data: rows.map(function (d) { return d.value; }),
           backgroundColor: paletaMotivos.slice(0, rows.length),
-          borderWidth: 2,
-          borderColor: '#ffffff'
+          borderWidth: rows.map(function (d) {
+            return (statusFilter && d.label === statusFilter) ? 4 : 2;
+          }),
+          borderColor: rows.map(function (d) {
+            return (statusFilter && d.label === statusFilter) ? CORES.vinho : '#ffffff';
+          })
         }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        cutout: '55%',
+        cutout: '62%',
+        onHover: function (e, elements) {
+          if (e.native && e.native.target) {
+            e.native.target.style.cursor = (elements && elements.length) ? 'pointer' : 'default';
+          }
+        },
+        onClick: function (e, elements) {
+          if (!elements || !elements.length) return;
+          var inst = chartInstances['chart-motivos'];
+          var label = inst && inst.data.labels ? inst.data.labels[elements[0].index] : null;
+          if (label) toggleStatusFilter(label);
+        },
         plugins: {
           legend: {
             position: 'bottom',
@@ -669,13 +855,68 @@
                 return ' ' + ctx.label + ': ' + ctx.raw + ' ocorrência(s)';
               }
             }
+          },
+          datalabels: {
+            color: '#ffffff',
+            font: { family: 'Inter', weight: '700', size: 10 },
+            textAlign: 'center',
+            display: function (ctx) {
+              var data = ctx.chart.data.datasets[0].data || [];
+              var sum = data.reduce(function (s, v) { return s + (Number(v) || 0); }, 0);
+              return sum > 0 && (Number(data[ctx.dataIndex]) || 0) / sum >= 0.05;
+            },
+            formatter: function (value, ctx) {
+              var data = ctx.chart.data.datasets[0].data || [];
+              var sum = data.reduce(function (s, v) { return s + (Number(v) || 0); }, 0);
+              var pct = sum > 0 ? Math.round((value / sum) * 100) : 0;
+              return value + '\n' + pct + '%';
+            }
           }
         }
-      }
+      },
+      plugins: plugins
+    };
+
+    updateChart('chart-motivos', 'canvas-motivos', config, {
+      total: total,
+      filteredLabel: statusFilter ? 'filtrado' : 'ocorrências'
     });
   }
 
-  // CALENDÁRIO DE ABSENTEÍSMO (GRID 4 MESES SEM CORTAR SÁBADO)
+  // ---- FILTRO POR STATUS (clique nas fatias da rosca) ----
+  function toggleStatusFilter(label) {
+    statusFilter = (statusFilter === label) ? null : label;
+    updateStatusChip();
+    fetchDashboardData({ background: true, statusFilterChange: true });
+  }
+
+  function updateStatusChip() {
+    var chip = document.getElementById('status-filter-chip');
+    if (chip) {
+      if (statusFilter) {
+        chip.style.display = 'inline-flex';
+        var txt = document.getElementById('status-filter-chip-text');
+        if (txt) txt.textContent = statusFilter;
+      } else {
+        chip.style.display = 'none';
+      }
+    }
+    var wrap = document.getElementById('chart-motivos');
+    if (wrap) wrap.classList.toggle('is-filtered', !!statusFilter);
+  }
+
+  function setupStatusChip() {
+    var btn = document.getElementById('status-chip-clear');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      if (!statusFilter) return;
+      statusFilter = null;
+      updateStatusChip();
+      fetchDashboardData({ background: true, statusFilterChange: true });
+    });
+  }
+
+  // CALENDÁRIO DE ABSENTEÍSMO (GRID 8 MESES COM ROLAGEM VERTICAL)
   function renderCalendario() {
     var container = document.getElementById('calendario');
     if (!container) return;
@@ -693,12 +934,28 @@
       calState.mes = minDate.getMonth();
     }
 
-    container.innerHTML = '';
+    var scrollTop = container.scrollTop;
 
-    for (var i = 0; i < 4; i++) {
+    container.innerHTML = '';
+    var pageMonths = calState.anual ? 12 : CAL_PAGE_MONTHS;
+
+    for (var i = 0; i < pageMonths; i++) {
       var d = new Date(calState.ano, calState.mes + i, 1);
       container.appendChild(buildMonthTable(d.getFullYear(), d.getMonth()));
     }
+
+    container.scrollTop = scrollTop;
+  }
+
+  // Atualização in-place da seleção do dia (sem reconstruir o DOM)
+  function setCalSelectedDay(iso) {
+    var container = document.getElementById('calendario');
+    if (!container) return;
+    var prev = container.querySelectorAll('.cal-day--selected');
+    prev.forEach(function (el) { el.classList.remove('cal-day--selected'); });
+    if (!iso) return;
+    var el = container.querySelector('.cal-day--has-data[data-iso="' + iso + '"]');
+    if (el) el.classList.add('cal-day--selected');
   }
 
   function buildMonthTable(ano, mes) {
@@ -776,28 +1033,38 @@
 
     if (prev) {
       prev.addEventListener('click', function () {
-        calState.mes -= 4;
+        calState.ano = calState.ano || new Date().getFullYear();
+        calState.mes -= CAL_PAGE_MONTHS;
         if (calState.mes < 0) {
           calState.mes += 12;
           calState.ano -= 1;
         }
+        calState.anual = false;
         renderCalendario();
       });
     }
     if (next) {
       next.addEventListener('click', function () {
-        calState.mes += 4;
+        calState.ano = calState.ano || new Date().getFullYear();
+        calState.mes += CAL_PAGE_MONTHS;
         if (calState.mes >= 12) {
           calState.mes -= 12;
           calState.ano += 1;
         }
+        calState.anual = false;
         renderCalendario();
       });
     }
     if (ano) {
       ano.addEventListener('click', function () {
-        calState.ano = new Date(periodoMin || Date.now()).getFullYear();
-        calState.mes = 0;
+        if (calState.anual) {
+          // Segundo clique: volta para a página de 8 meses na mesma posição
+          calState.anual = false;
+        } else {
+          calState.anual = true;
+          calState.ano = new Date(periodoMin || Date.now()).getFullYear();
+          calState.mes = 0;
+        }
         renderCalendario();
       });
     }
@@ -835,9 +1102,13 @@
       if (txt) txt.textContent = iso.split('-').reverse().join('/');
     }
 
+    // Seleção visual imediata (o fetch confirmará em seguida)
+    setCalSelectedDay(iso);
+
     // Sempre busca do servidor; LocalStorage permanece apenas como
     // fallback dentro de fetchDashboardData() (erro/vazio real).
-    fetchDashboardData();
+    // background: mantém o grid visível (sem spinner full-screen).
+    fetchDashboardData({ background: true, dayFilterChange: true });
   }
 
   function clearDayFilter() {
@@ -850,9 +1121,10 @@
     var chip = document.getElementById('day-filter-chip');
     if (chip) chip.style.display = 'none';
 
+    setCalSelectedDay(null);
     updateSliderFromInputs();
 
-    fetchDashboardData();
+    fetchDashboardData({ background: true, dayFilterChange: true });
   }
 
   function setupDayChip() {
@@ -919,14 +1191,13 @@
   function renderAbsenteismoMes(rows) {
     var container = document.getElementById('chart-mes');
     if (!container) return;
-    var canvas = getContainerCanvas('chart-mes', 'canvas-mes');
-    if (!canvas || typeof Chart === 'undefined') return;
     if (!rows || !rows.length) {
+      destroyChart('chart-mes');
       container.innerHTML = placeholderVazio();
       return;
     }
 
-    chartInstances['chart-mes'] = new Chart(canvas, {
+    updateChart('chart-mes', 'canvas-mes', {
       type: 'bar',
       data: {
         labels: rows.map(function (d) { return d.label; }),
@@ -942,6 +1213,7 @@
         maintainAspectRatio: false,
         plugins: {
           legend: { display: false },
+          datalabels: { display: false },
           tooltip: {
             callbacks: {
               label: function (c) { return ' % Absenteísmo: ' + pctBr(c.parsed.y); }
@@ -963,16 +1235,15 @@
     lastFuncaoData = rows || [];
     var container = document.getElementById('chart-funcao');
     if (!container) return;
-    var canvas = getContainerCanvas('chart-funcao', 'canvas-funcao');
-    if (!canvas || typeof Chart === 'undefined') return;
     if (!rows || !rows.length) {
+      destroyChart('chart-funcao');
       container.innerHTML = placeholderVazio();
       return;
     }
 
     var displayRows = funcaoExpanded ? rows : rows.slice(0, 10);
 
-    chartInstances['chart-funcao'] = new Chart(canvas, {
+    updateChart('chart-funcao', 'canvas-funcao', {
       type: 'bar',
       data: {
         labels: displayRows.map(function (d) { return d.label; }),
@@ -989,6 +1260,7 @@
         maintainAspectRatio: false,
         plugins: {
           legend: { display: false },
+          datalabels: { display: false },
           tooltip: {
             callbacks: {
               label: function (c) { return ' % Absenteísmo: ' + pctBr(c.parsed.x); }
@@ -1054,9 +1326,8 @@
   function renderHeadcountMovimentacao(turnoverMesRows, capacityTotal) {
     var container = document.getElementById('chart-headcount-movimentacao');
     if (!container) return;
-    var canvas = getContainerCanvas('chart-headcount-movimentacao', 'canvas-headcount-movimentacao');
-    if (!canvas || typeof Chart === 'undefined') return;
     if (!turnoverMesRows || !turnoverMesRows.length) {
+      destroyChart('chart-headcount-movimentacao');
       container.innerHTML = placeholderVazio();
       return;
     }
@@ -1075,7 +1346,7 @@
 
     var capacityLine = labels.map(function () { return capacityTotal || 0; });
 
-    chartInstances['chart-headcount-movimentacao'] = new Chart(canvas, {
+    updateChart('chart-headcount-movimentacao', 'canvas-headcount-movimentacao', {
       type: 'bar',
       data: {
         labels: labels,
@@ -1111,6 +1382,7 @@
         maintainAspectRatio: false,
         plugins: {
           legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } },
+          datalabels: { display: false },
           tooltip: { mode: 'index', intersect: false }
         },
         scales: {
@@ -1124,9 +1396,8 @@
   function renderTurnoverOperacional(turnoverMesRows, turnoverKpi) {
     var container = document.getElementById('chart-turnover-operacional');
     if (!container) return;
-    var canvas = getContainerCanvas('chart-turnover-operacional', 'canvas-turnover-operacional');
-    if (!canvas || typeof Chart === 'undefined') return;
     if (!turnoverMesRows || !turnoverMesRows.length) {
+      destroyChart('chart-turnover-operacional');
       container.innerHTML = placeholderVazio();
       return;
     }
@@ -1135,7 +1406,7 @@
     var operData = turnoverMesRows.map(function (d) { return d.operacional; });
     var metaLine = labels.map(function () { return META_TURNOVER_OPERACIONAL; });
 
-    chartInstances['chart-turnover-operacional'] = new Chart(canvas, {
+    updateChart('chart-turnover-operacional', 'canvas-turnover-operacional', {
       type: 'line',
       data: {
         labels: labels,
@@ -1167,6 +1438,7 @@
         maintainAspectRatio: false,
         plugins: {
           legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } },
+          datalabels: { display: false },
           tooltip: {
             callbacks: {
               label: function (ctx) {
@@ -1189,9 +1461,8 @@
   function renderRazaoReposicao(turnoverMesRows) {
     var container = document.getElementById('chart-razao-reposicao');
     if (!container) return;
-    var canvas = getContainerCanvas('chart-razao-reposicao', 'canvas-razao-reposicao');
-    if (!canvas || typeof Chart === 'undefined') return;
     if (!turnoverMesRows || !turnoverMesRows.length) {
+      destroyChart('chart-razao-reposicao');
       container.innerHTML = placeholderVazio();
       return;
     }
@@ -1210,7 +1481,7 @@
     var substituicao = Math.min(totalAdmissoes, totalDesligOperacionais);
     var expansao = Math.max(0, totalAdmissoes - substituicao);
 
-    chartInstances['chart-razao-reposicao'] = new Chart(canvas, {
+    updateChart('chart-razao-reposicao', 'canvas-razao-reposicao', {
       type: 'doughnut',
       data: {
         labels: ['% Substituição de Turnover', '% Expansão de Quadro'],
@@ -1227,10 +1498,13 @@
         cutout: '60%',
         plugins: {
           legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+          datalabels: { display: false },
           tooltip: {
             callbacks: {
               label: function (ctx) {
-                var total = substituicao + expansao;
+                // Data-driven: soma a partir dos dados atuais do chart
+                var d = (ctx.chart.data.datasets[0] && ctx.chart.data.datasets[0].data) || [];
+                var total = (Number(d[0]) || 0) + (Number(d[1]) || 0);
                 var pct = total > 0 ? ((ctx.raw / total) * 100).toFixed(1) + '%' : '0%';
                 return ' ' + ctx.label + ': ' + ctx.raw + ' colab. (' + pct + ')';
               }
@@ -1245,9 +1519,8 @@
   function renderComposicaoDesligamentos(turnoverMesRows) {
     var container = document.getElementById('chart-composicao-desligamentos');
     if (!container) return;
-    var canvas = getContainerCanvas('chart-composicao-desligamentos', 'canvas-composicao-desligamentos');
-    if (!canvas || typeof Chart === 'undefined') return;
     if (!turnoverMesRows || !turnoverMesRows.length) {
+      destroyChart('chart-composicao-desligamentos');
       container.innerHTML = placeholderVazio();
       return;
     }
@@ -1256,7 +1529,7 @@
     var operacionais = turnoverMesRows.map(function (d) { return d.operacionais || 0; });
     var reducao = turnoverMesRows.map(function (d) { return d.reducao || 0; });
 
-    chartInstances['chart-composicao-desligamentos'] = new Chart(canvas, {
+    updateChart('chart-composicao-desligamentos', 'canvas-composicao-desligamentos', {
       type: 'bar',
       data: {
         labels: labels,
@@ -1281,6 +1554,7 @@
         maintainAspectRatio: false,
         plugins: {
           legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } },
+          datalabels: { display: false },
           tooltip: {
             mode: 'index',
             intersect: false,
@@ -1378,7 +1652,23 @@
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' }
       };
 
-      html2pdf().set(opt).from(element).save();
+      // Expande a rolagem do calendário durante o snapshot do PDF
+      var calGrid = document.getElementById('calendario');
+      if (calGrid) calGrid.classList.add('cal-export');
+      var restoreCal = function () {
+        if (calGrid) calGrid.classList.remove('cal-export');
+      };
+      try {
+        var task = html2pdf().set(opt).from(element).save();
+        if (task && typeof task.then === 'function') {
+          task.then(restoreCal).catch(restoreCal);
+        } else {
+          restoreCal();
+        }
+      } catch (e) {
+        restoreCal();
+        console.warn('Falha na exportação PDF:', e);
+      }
     });
   }
 

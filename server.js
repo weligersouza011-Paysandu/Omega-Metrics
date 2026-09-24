@@ -282,7 +282,7 @@ app.get('/api/dashboard/datas-disponiveis', async (req, res) => {
 
 app.get('/api/dashboard/kpis', async (req, res) => {
   try {
-    const { dataInicio, dataFim } = req.query;
+    const { dataInicio, dataFim, status } = req.query;
 
     if (!dataInicio || !dataFim) {
       return res.status(400).json({ success: false, error: 'Parâmetros dataInicio e dataFim são obrigatórios.' });
@@ -293,8 +293,16 @@ app.get('/api/dashboard/kpis', async (req, res) => {
     const efetivoTotal = await getEfetivoTotal(dataInicio, dataFim);
     const turnoverCounts = await getTurnoverCounts(dataInicio, dataFim);
 
-    const pontoData = toPontoDataShape(pontoRows);
+    let pontoData = toPontoDataShape(pontoRows);
     const desligData = toDesligDataShape(desligRows);
+
+    // Filtro opcional por status (clique nas fatias da rosca de justificativas):
+    // recalcula os KPIs de absenteísmo apenas sobre as linhas daquele status.
+    // `semDados` continua baseado em pontoRows/desligRows NÃO filtrados.
+    const statusFilter = typeof status === 'string' && status.trim() ? status.trim() : null;
+    if (statusFilter) {
+      pontoData = pontoData.filter(row => getStatusMeta(row && row.status).label === statusFilter);
+    }
 
     const { kpis, graficos } = calculateMetrics(pontoData, desligData, efetivoTotal);
 
