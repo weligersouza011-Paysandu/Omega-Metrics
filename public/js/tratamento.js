@@ -25,7 +25,7 @@
       geraAbsenteismo: true
     },
     ISENCAO: {
-      lista: ["COMPENSAÇÃO", "FÉRIAS", "FOLGA", "EXAME PERIÓDICO", "LICENÇA MATERNIDADE", "INSS", "AGUARDANDO CRACHÁ", "TREINAMENTO", "FERIADO"],
+      lista: ["COMPENSAÇÃO", "FÉRIAS", "FOLGA", "EXAME PERIÓDICO", "LICENÇA MATERNIDADE", "INSS", "AGUARDANDO CRACHÁ", "TREINAMENTO", "FERIADO", "AGUARDANDO MOBILIZAÇÃO SGC", "TRANSFERÊNCIA"],
       badgeClass: "badge-secondary",
       bgHex: "#6B7280",
       contaComoPresenca: false,
