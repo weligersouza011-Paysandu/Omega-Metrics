@@ -1,0 +1,859 @@
+/* ============================================================
+   OMEGA RHUB CT251 — Dashboard Executivo de RH (fullscreen)
+   Layout: topbar vinho/grafite · hero glass · filtros (datas +
+           slider dual) · grid superior (gauge + calendários) ·
+           grid inferior (4 cards)
+   Depende de style.css (variáveis .btn .card etc.) — carregar antes.
+   ============================================================ */
+
+/* ===== 0. tokens locais ===== */
+:root {
+  --rhub-vinho: #7f1d1d;
+  --rhub-vinho-dark: #4c0519;
+  --rhub-grafite: #1f2937;
+  --rhub-verde: #10b981;
+  --rhub-ambar: #f59e0b;
+  --rhub-vermelho: #ef4444;
+  --rhub-pista: #e2e8f0;
+}
+
+/* ===== 1. layout geral: 4 linhas (100% da tela) ===== */
+.rhub-app {
+  display: grid;
+  grid-template-rows: auto auto auto auto 1fr;
+  min-height: 100vh;
+  margin: 0;
+  width: 100%;
+}
+
+/* ===== 2. topbar vinho → grafite ===== */
+.rhub-topbar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  height: 58px;
+  padding: 0 30px;
+  background: linear-gradient(105deg, var(--rhub-vinho-dark) 0%, var(--rhub-vinho) 45%, var(--rhub-grafite) 100%);
+  color: #fff;
+  box-shadow: var(--shadow-md);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+.rhub-topbar__menu {
+  justify-self: start;
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 1.15rem;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background var(--transition);
+}
+.rhub-topbar__menu:hover { background: rgba(255, 255, 255, 0.18); }
+.rhub-topbar__logo {
+  justify-self: center;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-weight: 800;
+  font-size: 1rem;
+  letter-spacing: 0.06em;
+}
+.rhub-topbar__logo img {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #fff;
+  object-fit: contain;
+  padding: 2px;
+}
+.rhub-topbar__actions {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.rhub-topbar__date {
+  font-size: 0.8rem;
+  font-weight: 500;
+  opacity: 0.9;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+.rhub-topbar .btn-ghost {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.3);
+}
+.rhub-topbar .btn-ghost:hover { background: rgba(255, 255, 255, 0.12); }
+
+/* gaveta do hambúrguer */
+.rhub-drawer {
+  position: fixed;
+  top: 58px;
+  left: 0;
+  width: 240px;
+  height: calc(100vh - 58px);
+  background: var(--rhub-grafite);
+  color: #e2e8f0;
+  padding: 1rem;
+  z-index: 60;
+  transform: translateX(-100%);
+  transition: transform 200ms ease;
+  box-shadow: var(--shadow-lg);
+}
+.rhub-drawer.open { transform: translateX(0); }
+.rhub-drawer a {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: var(--radius);
+  color: #e2e8f0;
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+.rhub-drawer a:hover,
+.rhub-drawer a.active { background: rgba(255, 255, 255, 0.1); text-decoration: none; }
+
+/* ===== 3. hero glassmorphism ===== */
+.rhub-hero {
+  position: relative;
+  min-height: 230px;
+  display: grid;
+  place-items: center;
+  background: url('../assets/hero-bg.jpg') center 30% / cover no-repeat;
+  overflow: hidden;
+}
+.rhub-hero::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.72), rgba(76, 5, 25, 0.55));
+}
+.rhub-hero__card {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 1.1rem;
+  align-items: start;
+  max-width: 860px;
+  margin: 2rem 1.25rem;
+  padding: 1.5rem 1.75rem;
+  background: rgba(255, 255, 255, 0.10);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: var(--radius-lg);
+  color: #fff;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+}
+.rhub-hero__badge {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #fff;
+  color: var(--rhub-vinho);
+  font-weight: 800;
+  font-size: 1.15rem;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+.rhub-hero__title {
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  margin-bottom: 0.4rem;
+}
+
+/* ===== 3.1 divisor da seção ABSENTEÍSMO (acima dos filtros) ===== */
+.rhub-absent-head {
+  background: var(--white);
+  padding: 0.85rem 30px 0.75rem;
+}
+.rhub-absent-head .rhub-section-divider { margin-bottom: 0.55rem; }
+.rhub-section-desc {
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--gray-500);
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* ===== 4. barra de filtros: datas | slider dual ===== */
+.rhub-filters {
+  display: grid;
+  grid-template-columns: auto minmax(280px, 1fr);
+  gap: 1.5rem;
+  align-items: center;
+  background: var(--white);
+  border-bottom: 1px solid var(--gray-200);
+  padding: 12px 30px;
+}
+.rhub-filters__dates {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.rhub-filters .text-muted { color: var(--gray-500); }
+.range-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.range-field label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--gray-600);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+}
+.range-input { width: 118px; text-align: center; }
+.rhub-filters__slider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+.rhub-filters__slider > label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--gray-500);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+/* --- chip do filtro diário (cross-filter do calendário) --- */
+.day-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: rgba(127, 29, 29, 0.08);
+  border: 1px solid var(--rhub-vinho);
+  color: var(--rhub-vinho);
+  border-radius: 999px;
+  padding: 0.2rem 0.35rem 0.2rem 0.65rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.day-chip__x {
+  border: none;
+  background: var(--rhub-vinho);
+  color: #fff;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 0.8rem;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+.day-chip__x:hover { background: var(--rhub-vinho-dark); }
+
+/* --- slider dual (noUiSlider) --- */
+.rhub-slider-dual {
+  flex: 1;
+  min-width: 200px;
+  height: 6px;
+}
+.rhub-slider-dual .noUi-target {
+  height: 6px;
+  background: var(--gray-200);
+  border: none;
+  border-radius: 999px;
+  box-shadow: none;
+}
+.rhub-slider-dual .noUi-connect {
+  height: 6px;
+  background: linear-gradient(90deg, var(--rhub-vinho), var(--primary));
+  border-radius: 999px;
+}
+.rhub-slider-dual .noUi-handle {
+  width: 18px;
+  height: 18px;
+  top: -6px;
+  right: -9px;
+  border-radius: 50%;
+  background: var(--primary);
+  border: 3px solid #fff;
+  box-shadow: var(--shadow);
+  cursor: grab;
+}
+.rhub-slider-dual .noUi-handle:active,
+.rhub-slider-dual .noUi-handle.rh-drag { cursor: grabbing; }
+.rhub-slider-dual .noUi-handle:focus { outline: none; }
+
+/* tooltip de data no hover / arraste */
+.rh-tip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 9px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--rhub-grafite);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  font-family: inherit;
+  padding: 3px 7px;
+  border-radius: 6px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 8;
+  box-shadow: var(--shadow);
+}
+.rh-tip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 4px solid transparent;
+  border-top-color: var(--rhub-grafite);
+}
+.noUi-handle:hover .rh-tip,
+.noUi-handle:focus .rh-tip,
+.noUi-handle.rh-drag .rh-tip { display: block; }
+
+/* ===== 5. conteúdo (100% da largura útil) ===== */
+.rhub-main {
+  display: grid;
+  gap: 1.25rem;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 15px 30px;
+}
+
+/* ===== 6. LAYOUT: linha 1 resumo+calendário | linha 2 três cards | linha 3 turnover ===== */
+.rhub-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 7fr) minmax(0, 18fr);
+  grid-template-areas:
+    "summary calendar"
+    "ranking  charts"
+    "turnover turnover";
+  grid-template-rows: auto auto auto;
+  align-items: stretch;
+  gap: 1.25rem;
+  width: 100%;
+  max-width: 100%;
+}
+/* linha 1 · esquerda: card único resumo (gauge + rosca) estica na coluna */
+.top-summary {
+  grid-area: summary;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  min-width: 0;
+}
+.top-summary .card-resumo { flex: 1 1 auto; }
+/* linha 1 · direita: calendário estica na linha; corpo redistribui a altura */
+.card-calendar {
+  grid-area: calendar;
+  min-width: 0;
+}
+.rhub-cal-body {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-evenly;
+  gap: 0.75rem;
+  min-height: 0;
+}
+/* linha 2: ranking (sob o resumo) + mês/função (sob o calendário) */
+.card-ranking {
+  grid-area: ranking;
+  min-width: 0;
+}
+.bottom-charts {
+  grid-area: charts;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 1.25rem;
+  min-width: 0;
+}
+.bottom-charts .rhub-card { min-height: 0; }
+/* linha 3: seção de turnover (ponta a ponta) */
+.turnover-section {
+  grid-area: turnover;
+  min-width: 0;
+}
+.rhub-card {
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 1.15rem 1.25rem;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 0.75rem;
+  min-width: 0;
+}
+.rhub-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.rhub-card__title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--gray-600);
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.rhub-card__title i { color: var(--rhub-vinho); }
+.btn-expand {
+  font-size: 0.68rem !important;
+  padding: 0.28rem 0.6rem !important;
+}
+
+/* resumo unificado: gauge fixo em cima + rosca esticada embaixo */
+.resumo-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.resumo-block__label {
+  display: block;
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--gray-600);
+  margin-bottom: 0.35rem;
+}
+.resumo-block--gauge { flex: 0 0 auto; }
+.resumo-block--donut {
+  flex: 1 1 auto;
+  min-height: 280px;
+  border-top: 1px dashed var(--gray-200);
+  padding-top: 0.85rem;
+}
+.rhub-donut-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 280px;
+}
+.rhub-card.chart-card.card-resumo { min-height: 480px; }
+.rhub-gauge-wrap {
+  position: relative;
+  width: 100%;
+  max-width: 320px;
+  margin: 0 auto;
+}
+.rhub-gauge-foot {
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--gray-500);
+}
+
+/* calendários */
+.rhub-cal-controls { display: flex; gap: 0.4rem; align-items: center; }
+.rhub-cal-nav {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--gray-300);
+  border-radius: var(--radius-sm);
+  background: var(--white);
+  color: var(--gray-600);
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: all var(--transition);
+}
+.rhub-cal-nav:hover {
+  border-color: var(--rhub-vinho);
+  color: var(--rhub-vinho);
+  background: rgba(127, 29, 29, 0.06);
+}
+.rhub-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.rhub-cal-mes {
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.rhub-cal-mes__nome {
+  text-align: center;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--gray-700);
+  text-transform: capitalize;
+  padding-bottom: 0.2rem;
+  border-bottom: 1px solid var(--gray-200);
+}
+.rhub-cal-semana,
+.rhub-cal-dias {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 3px;
+  width: 100%;
+}
+.rhub-cal-semana span {
+  text-align: center;
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: var(--gray-400);
+  text-transform: uppercase;
+  padding: 0.15rem 0;
+}
+.rhub-cal-dia {
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--gray-600);
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+.rhub-cal-dia.vazia { visibility: hidden; }
+/* regra de cores — heatmap por meta 3% */
+.cal--verde    { background: rgba(16, 185, 129, 0.16); box-shadow: inset 0 -3px 0 var(--rhub-verde);    color: #047857; }
+.cal--amarelo  { background: rgba(245, 158, 11, 0.18); box-shadow: inset 0 -3px 0 var(--rhub-ambar);    color: #b45309; }
+.cal--vermelho { background: rgba(239, 68, 68, 0.18);  box-shadow: inset 0 -3px 0 var(--rhub-vermelho); color: #b91c1c; }
+.cal--neutro   { background: transparent; box-shadow: none; color: var(--gray-300); }
+/* dias com dados = clicáveis (cross-filter diário) */
+.rhub-cal-dia.has-data { cursor: pointer; }
+.rhub-cal-dia.has-data:hover { filter: brightness(0.93); }
+/* dia selecionado pelo filtro diário */
+.rhub-cal-dia--sel {
+  outline: 2px solid var(--rhub-vinho);
+  outline-offset: 1px;
+  z-index: 1;
+  font-weight: 800;
+}
+
+.rhub-cal-legend {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+  font-size: 0.72rem;
+  color: var(--gray-500);
+  padding-top: 0.35rem;
+  border-top: 1px dashed var(--gray-200);
+}
+.rhub-cal-legend .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 0.3rem;
+  vertical-align: -1px;
+}
+.rhub-cal-legend .dot--verde    { background: var(--rhub-verde); }
+.rhub-cal-legend .dot--amarelo  { background: var(--rhub-ambar); }
+.rhub-cal-legend .dot--vermelho { background: var(--rhub-vermelho); }
+.rhub-cal-legend .dot--neutro   { background: var(--gray-300); }
+
+/* ===== 7. CARDS DA ÁREA OPERACIONAL (3 col proporcionais) ===== */
+.rhub-panel-body { min-height: 300px; position: relative; }
+/* expandir "Todas as funções": rolagem interna suave */
+.rhub-panel-body.expanded {
+  max-height: 70vh;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+}
+
+/* ===== 7.1 cartões de gráfico: flex column + container de canvas ===== */
+.rhub-card.chart-card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 320px;
+  padding: 16px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.chart-card .rhub-card__header { flex: 0 0 auto; }
+.chart-container,
+.rhub-panel-body.chart-container {
+  position: relative;
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+.chart-container canvas {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+/* ranking de colaboradores */
+.rank-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.rank-list li {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto auto;
+  gap: 0.55rem;
+  align-items: center;
+  padding: 0.45rem 0.55rem;
+  background: var(--gray-50);
+  border: 1px solid var(--gray-100);
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+}
+.rank-pos {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--rhub-vinho);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
+}
+.rank-list li:nth-child(1) .rank-pos { background: #b45309; }
+.rank-list li:nth-child(2) .rank-pos { background: #64748b; }
+.rank-list li:nth-child(3) .rank-pos { background: #92400e; }
+.rank-nome {
+  font-weight: 600;
+  color: var(--gray-700);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rank-faltas {
+  font-size: 0.68rem;
+  color: var(--gray-500);
+  background: var(--gray-100);
+  padding: 2px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.rank-pct {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.rank-more {
+  font-size: 0.7rem;
+  color: var(--gray-400);
+  text-align: center;
+  padding-top: 0.35rem;
+}
+.pct--verde    { color: var(--rhub-verde); }
+.pct--amarelo  { color: var(--rhub-ambar); }
+.pct--vermelho { color: var(--rhub-vermelho); }
+
+/* loading / empty reaproveitados de style.css (.status-bar .dashboard-empty) */
+
+/* ===== 8. responsividade ===== */
+@media (max-width: 1500px) {
+  /* coluna operacional encurta — calendário cai para 3 meses */
+  .rhub-cal-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 1200px) {
+  /* empilha: resumo → calendário → ranking → gráficos → turnover */
+  .rhub-layout {
+    grid-template-columns: 1fr;
+    grid-template-areas: "summary" "calendar" "ranking" "charts" "turnover";
+  }
+}
+@media (max-width: 1024px) {
+  .rhub-cal-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rhub-filters { grid-template-columns: 1fr; }
+  .rhub-topbar__date { display: none; }
+}
+@media (max-width: 768px) {
+  .bottom-charts { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .rhub-main { padding: 15px; }
+  .rhub-filters { padding: 12px 15px; }
+  .rhub-absent-head { padding: 0.75rem 15px 0.65rem; }
+  .rhub-topbar { padding: 0 15px; }
+  .rhub-cal-grid { grid-template-columns: 1fr; }
+  .rhub-hero__card { grid-template-columns: 1fr; }
+  .rhub-topbar__logo { font-size: 0.85rem; }
+}
+
+/* ===== 9. seção TURNOVER: divisor + grid de 4 cards ===== */
+.rhub-section-divider {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin: 0.25rem 0 1.15rem;
+}
+.rhub-section-divider::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background: var(--rhub-vinho);
+}
+.rhub-section-divider__label {
+  position: relative;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--white);
+  background: var(--rhub-vinho);
+  border: 1px solid var(--rhub-vinho-dark);
+  border-radius: 999px;
+  padding: 0.3rem 1.1rem;
+  box-shadow: var(--shadow-sm);
+}
+.turnover-section__action {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--white);
+}
+@media (max-width: 900px) {
+  .rhub-section-divider { flex-wrap: wrap; }
+  .turnover-section__action { position: static; transform: none; margin-left: 0.75rem; }
+}
+/* Banner de critérios de cálculo */
+.turnover-criteria {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  margin: 0 0 1.15rem;
+  padding: 0.75rem 1rem;
+  background: rgba(127, 29, 29, 0.05);
+  border: 1px solid rgba(127, 29, 29, 0.18);
+  border-left: 4px solid var(--rhub-vinho);
+  border-radius: var(--radius-sm, 6px);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: var(--rhub-grafite);
+}
+.turnover-criteria__icon {
+  color: var(--rhub-vinho);
+  font-size: 1rem;
+  margin-top: 1px;
+}
+.turnover-criteria__text strong { color: var(--rhub-vinho-dark); }
+/* Modal largo p/ tabela do Digital do Turnover */
+.modal--wide { max-width: 860px; }
+#tabela-digital-turnover td:nth-child(3) { white-space: nowrap; }
+.badge-class-operacao {
+  background: rgba(127, 29, 29, 0.1);
+  color: var(--rhub-vinho);
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.badge-class-reducao {
+  background: #e2e8f0;
+  color: #475569;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.turnover-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1.25rem;
+  width: 100%;
+}
+.turnover-grid .rhub-card { min-width: 0; }
+.turnover-grid .rhub-panel-body:not(.chart-container) { min-height: 260px; }
+/* Card 1 · KPIs comparativos com faixa de meta */
+.turnover-kpis {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+  align-content: center;
+}
+.t-kpi {
+  border-left: 4px solid var(--rhub-pista);
+  padding: 0.55rem 0.9rem;
+  background: var(--gray-50, #f9fafb);
+  border-radius: var(--radius-sm, 6px);
+}
+.t-kpi[data-level="verde"]    { border-left-color: var(--rhub-verde); }
+.t-kpi[data-level="ambar"]    { border-left-color: var(--rhub-ambar); }
+.t-kpi[data-level="vermelho"] { border-left-color: var(--rhub-vermelho); }
+.t-kpi__label {
+  display: block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--gray-500, #6b7280);
+}
+.t-kpi__value {
+  display: block;
+  font-size: 1.9rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--rhub-grafite);
+  line-height: 1.15;
+}
+.t-kpi__meta {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--gray-500, #6b7280);
+}
+@media (max-width: 1500px) {
+  .turnover-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 768px) {
+  .turnover-grid { grid-template-columns: 1fr; }
+}
+
+/* ===== 10. impressão / PDF ===== */
+body.pdf-export .rhub-topbar,
+body.pdf-export .rhub-drawer,
+body.pdf-export .rhub-filters,
+body.pdf-export .no-print { display: none !important; }
+
+@media print {
+  .rhub-topbar, .rhub-drawer, .rhub-filters, .no-print { display: none !important; }
+  .rhub-hero { min-height: 140px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .rhub-main { padding: 0; }
+  .rhub-cal-dia { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}

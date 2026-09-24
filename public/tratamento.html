@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tratamento de Ponto — Omega Metrics</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="style.css" rel="stylesheet">
+</head>
+<body>
+  <nav class="topbar no-print">
+    <div class="topbar-inner">
+      <div class="topbar-brand">
+        <div class="topbar-logo"><i class="bi bi-graph-up-arrow"></i></div>
+        <div class="topbar-titles">
+          <span class="topbar-brand-name">Omega Metrics</span>
+          <span class="topbar-brand-sub">Módulo de Tratamento de Ponto</span>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <a href="dashboard.html" class="btn btn-outline no-print">
+          <i class="bi bi-bar-chart"></i>
+          <span>Dashboard</span>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="main-container">
+    <section class="upload-section card">
+      <div class="card-header">
+        <div class="header-left">
+          <i class="bi bi-cloud-arrow-up"></i>
+          <h5>Importar Planilha de Ponto Tratado</h5>
+        </div>
+      </div>
+      <form id="upload-form" class="card-body" enctype="multipart/form-data">
+        <div class="form-row form-row-single">
+          <div class="form-group">
+            <label class="label" for="file_ponto">
+              <i class="bi bi-file-earmark-spreadsheet"></i>
+              fDB_Ponto Tratado (.xlsx)
+            </label>
+            <div class="file-input-wrapper">
+              <input type="file" id="file_ponto" name="file_ponto" accept=".xlsx,.xls" class="input file-input" required>
+              <div class="file-input-display">
+                <i class="bi bi-file-earmark-excel"></i>
+                <span class="file-name" id="file-ponto-name">Nenhum arquivo selecionado</span>
+              </div>
+            </div>
+            <span class="form-hint">Planilha obrigatória com colunas: Matrícula, Nome, Dia, Status, Entrada 1, Saída 2, H. Normais, etc.</span>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary btn-lg" id="btn-processar">
+            <i class="bi bi-gear-wide-connected"></i>
+            <span>Processar Arquivo</span>
+            <span class="spinner spinner-sm" id="btn-spinner"></span>
+          </button>
+          <button type="button" class="btn btn-outline btn-lg" id="btn-limpar" disabled>
+            <i class="bi bi-arrow-counterclockwise"></i>
+            <span>Limpar</span>
+          </button>
+        </div>
+        <div id="upload-status" class="status-bar" style="display:none;">
+          <div class="spinner"></div>
+          <span id="upload-status-text">Processando arquivos...</span>
+        </div>
+        <div id="upload-error" class="alert alert-danger" style="display:none;"></div>
+      </form>
+    </section>
+
+    <section id="preview-section" class="preview-section" style="display:none;">
+      <div class="card mb-4">
+        <div class="card-header">
+          <div class="header-left">
+            <i class="bi bi-table"></i>
+            <h5>Prévia dos Dados Processados</h5>
+          </div>
+          <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+            <span class="badge badge-danger" id="kpi-absenteismo-preview" title="Absenteísmo previsto (isenções excluídas)">Absenteísmo: —</span>
+            <span class="badge badge-info" id="badge-total-registros">0 registros</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="table-container">
+            <table class="table" id="preview-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>MATRÍCULA</th>
+                  <th>FUNCIONÁRIO</th>
+                  <th>FUNÇÃO</th>
+                  <th>DIA</th>
+                  <th>STATUS</th>
+                  <th>ENTRADA 1</th>
+                  <th>SAÍDA 2</th>
+                  <th>H. NORMAIS</th>
+                </tr>
+              </thead>
+              <tbody id="preview-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card-footer preview-footer">
+          <button type="button" class="btn btn-success btn-lg" id="btn-enviar-bi" disabled>
+            <i class="bi bi-send-check"></i>
+            <span>Enviar para o BI</span>
+            <span class="spinner spinner-sm" id="btn-bi-spinner" style="display:none;"></span>
+          </button>
+        </div>
+      </div>
+
+      <div id="inconsistencias-section" class="card mb-4" style="display:none;">
+        <div class="card-header">
+          <div class="header-left">
+            <i class="bi bi-exclamation-triangle"></i>
+            <h5>Inconsistências Detectadas</h5>
+          </div>
+          <span class="badge badge-warning" id="badge-inconsistencias">0</span>
+        </div>
+        <div class="card-body">
+          <div id="inconsistencias-summary" class="mb-3"></div>
+          <div class="table-container">
+            <table class="table" id="inconsistencias-table">
+              <thead>
+                <tr>
+                  <th>Tipo</th>
+                  <th>Linha</th>
+                  <th>Funcionário</th>
+                  <th>Departamento</th>
+                  <th>Detalhe</th>
+                  <th>Ações</th>
+                </tr>
+              </thead>
+              <tbody id="inconsistencias-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div id="demissoes-section" class="card mb-4" style="display:none;">
+        <div class="card-header">
+          <div class="header-left">
+            <i class="bi bi-person-dash"></i>
+            <h5>Demissões Detectadas — Justificativa Obrigatória</h5>
+          </div>
+          <span class="badge badge-danger" id="badge-demissoes">0 pendentes</span>
+        </div>
+        <div class="card-body">
+          <p class="mb-3 text-muted">
+            O sistema identificou registros com indícios de demissão (<strong>Status</strong>, <strong>Entrada 1</strong> ou <strong>Saída 2</strong> contendo "Demissão", "Demitido", "Desligado" ou "Rescisão").
+            Para cada colaborador abaixo, selecione a justificativa real do desligamento.
+          </p>
+          <div id="demissoes-list"></div>
+          <div class="alert alert-info mt-3">
+            <i class="bi bi-info-circle"></i>
+            <strong>Regra de Turnover:</strong> Apenas a opção <strong>"Redução de Quadro / Desmobilização do Cliente"</strong> é <strong>excluída</strong> do cálculo de Turnover Operacional. As demais entram no turnover.
+          </div>
+        </div>
+      </div>
+
+      <div id="success-section" class="card" style="display:none;">
+        <div class="card-body text-center py-5">
+          <div class="success-icon mb-3"><i class="bi bi-check-circle-fill"></i></div>
+          <h4>Dados Salvos com Sucesso!</h4>
+          <p class="text-muted mb-4" id="success-message"></p>
+          <div class="d-flex gap-2 justify-content-center flex-wrap">
+            <a href="dashboard.html" class="btn btn-primary">
+              <i class="bi bi-bar-chart"></i>
+              Ver Dashboard
+            </a>
+            <button type="button" class="btn btn-outline" id="btn-novo-upload">
+              <i class="bi bi-plus-circle"></i>
+              Novo Upload
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="modal modal-overlay" id="modal-justificativa" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h5 class="modal-title" id="modal-title">Justificativa de Desligamento</h5>
+        <button type="button" class="modal-close" id="modal-close" aria-label="Fechar"><i class="bi bi-x-lg"></i></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="label">Colaborador</label>
+          <p class="fw-semibold" id="modal-funcionario"></p>
+        </div>
+        <div class="mb-3">
+          <label class="label">Data / Campo Detectado</label>
+          <p id="modal-detalhe" class="text-muted small"></p>
+        </div>
+        <div class="mb-3">
+          <label class="label">Valor Original Encontrado</label>
+          <code class="d-block bg-gray-100 p-2 rounded" id="modal-valor"></code>
+        </div>
+        <label class="label">Selecione a Justificativa <span class="text-danger">*</span></label>
+        <div class="radio-group" id="modal-justificativas">
+          <label class="radio-option">
+            <input type="radio" name="justificativa" value="absenteismo">
+            <div class="radio-content">
+              <strong>Excesso de Atestados / Absenteísmo</strong>
+              <span class="text-muted small">Entra no Turnover Operacional</span>
+            </div>
+          </label>
+          <label class="radio-option">
+            <input type="radio" name="justificativa" value="baixa_produtividade">
+            <div class="radio-content">
+              <strong>Baixa Produtividade</strong>
+              <span class="text-muted small">Entra no Turnover Operacional</span>
+            </div>
+          </label>
+          <label class="radio-option">
+            <input type="radio" name="justificativa" value="desvio_comportamental">
+            <div class="radio-content">
+              <strong>Desvio Comportamental</strong>
+              <span class="text-muted small">Entra no Turnover Operacional</span>
+            </div>
+          </label>
+          <label class="radio-option">
+            <input type="radio" name="justificativa" value="pedido_demissao">
+            <div class="radio-content">
+              <strong>Pedido de Demissão pelo Colaborador</strong>
+              <span class="text-muted small">Entra no Turnover Operacional</span>
+            </div>
+          </label>
+          <label class="radio-option">
+            <input type="radio" name="justificativa" value="reducao_quadro">
+            <div class="radio-content">
+              <strong>Redução de Quadro / Desmobilização do Cliente</strong>
+              <span class="text-muted small text-warning"><i class="bi bi-exclamation-triangle"></i> EXCLUÍDO do Turnover Operacional</span>
+            </div>
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" id="modal-cancelar">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="modal-salvar" disabled>
+          <i class="bi bi-check"></i>
+          Salvar Justificativa
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal modal-overlay" id="modal-correcao" role="dialog" aria-modal="true" aria-labelledby="modal-correcao-title">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h5 class="modal-title" id="modal-correcao-title">Corrigir Inconsistência</h5>
+        <button type="button" class="modal-close" id="modal-correcao-close" aria-label="Fechar"><i class="bi bi-x-lg"></i></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="label">Colaborador</label>
+          <p class="fw-semibold" id="correcao-funcionario"></p>
+        </div>
+        <div class="mb-3">
+          <label class="label">Data / Tipo / Detalhe</label>
+          <p id="correcao-detalhe" class="text-muted small"></p>
+        </div>
+        <div class="mb-3">
+          <label class="label">Valores Atuais</label>
+          <div id="correcao-atuais" class="correcao-atuais"></div>
+        </div>
+        <div id="correcao-campos"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" id="modal-correcao-cancelar">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="modal-correcao-salvar" disabled>
+          <i class="bi bi-check"></i>
+          Salvar Correção
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-container" id="toast-container"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts@3.44.2/dist/apexcharts.min.js"></script>
+  <script src="js/tratamento.js"></script>
+</body>
+</html>

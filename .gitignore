@@ -1,0 +1,14 @@
+node_modules/
+.env
+.env.*
+*.log
+npm-debug.log*
+
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/*.bak_*
+data/*.json
+
+.DS_Store
+Thumbs.db

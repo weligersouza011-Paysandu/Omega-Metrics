@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard de RH — OMEGA RHUB CT251</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/nouislider/dist/nouislider.min.css" rel="stylesheet">
+  <link href="style.css" rel="stylesheet">
+
+  <!-- BIBLIOTECAS VENDOR (CDN) — carregadas antes do corpo/script principal -->
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/pt.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/nouislider/dist/nouislider.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+</head>
+<body class="rhub-app">
+
+  <!-- ============ A. CABEÇALHO SUPERIOR (TOPBAR) ============ -->
+  <header class="rhub-topbar no-print">
+    <button type="button" class="rhub-topbar__menu" id="btn-menu" title="Menu" aria-label="Abrir menu">
+      <i class="bi bi-list"></i>
+    </button>
+    <div class="rhub-topbar__logo">
+      <img src="assets/logo.png" alt="Omega" onerror="this.style.display='none'">
+      <span>OMEGA SERVICE</span>
+    </div>
+    <div class="rhub-topbar__actions">
+      <span class="rhub-topbar__date" id="data-por-extenso">—</span>
+      <button class="btn btn-sm btn-ghost" id="btn-export-pdf" title="Exportar PDF">
+        <i class="bi bi-file-earmark-pdf"></i>
+        <span>PDF</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- GAVETA LATERAL DO MENU -->
+  <nav class="rhub-drawer no-print" id="menu-drawer" aria-hidden="true">
+    <a href="dashboard.html" class="active"><i class="bi bi-speedometer2"></i> Dashboard</a>
+    <a href="tratamento.html"><i class="bi bi-cloud-arrow-up"></i> Tratamento</a>
+  </nav>
+
+  <!-- ============ A1. HERO BANNER (TÍTULO ESTRITO) ============ -->
+  <section class="rhub-hero">
+    <div class="rhub-hero__card">
+      <div class="rhub-hero__badge">1</div>
+      <div>
+        <h1 class="rhub-hero__title">Dashboard RH Omega 251</h1>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ A2. DIVISOR SEÇÃO ABSENTEÍSMO ============ -->
+  <section class="rhub-absent-head" aria-label="Seção Absenteísmo">
+    <div class="rhub-section-divider" role="separator">
+      <span class="rhub-section-divider__label">ABSENTEÍSMO</span>
+    </div>
+    <p class="rhub-section-desc">
+      Indicadores operacionais de presença, faltas, atestados e cumprimento de meta geral.
+    </p>
+  </section>
+
+  <!-- ============ B. BARRA DE FILTROS: PERÍODO + SLIDER DUAL ============ -->
+  <section class="rhub-filters no-print">
+    <div class="rhub-filters__dates">
+      <i class="bi bi-calendar3" style="color:var(--rhub-vinho);font-size:1.15rem;"></i>
+      <span class="calendar-label">Período</span>
+      <span class="range-field">
+        <label for="range-inicio">Início:</label>
+        <input type="text" id="range-inicio" class="range-input" placeholder="DD/MM/AAAA" readonly>
+      </span>
+      <span class="range-field">
+        <label for="range-fim">Até:</label>
+        <input type="text" id="range-fim" class="range-input" placeholder="DD/MM/AAAA" readonly>
+      </span>
+      <span id="calendar-info" class="text-muted" style="font-size:0.75rem;"></span>
+      <span id="day-filter-chip" class="day-chip" style="display:none;" title="Filtro diário ativo — clique no × para limpar">
+        <i class="bi bi-funnel-fill"></i>
+        <span class="day-chip__text">—</span>
+        <button type="button" class="day-chip__x" id="day-chip-clear" aria-label="Limpar filtro do dia">&times;</button>
+      </span>
+    </div>
+
+    <div class="rhub-filters__slider">
+      <label>Ajuste temporal</label>
+      <div id="slider-periodo" class="rhub-slider-dual" aria-label="Ajuste temporal do período"></div>
+    </div>
+  </section>
+
+  <!-- ============ CONTEÚDO PRINCIPAL ============ -->
+  <main class="rhub-main" id="rhub-main">
+
+    <div id="dashboard-loading" class="status-bar" style="display:none;">
+      <div class="spinner"></div>
+      <span>Carregando indicadores do período...</span>
+    </div>
+
+    <div id="dashboard-empty" class="dashboard-empty" style="display:none;">
+      <i class="bi bi-inbox"></i>
+      <h5>Nenhum dado no período selecionado</h5>
+      <p>Faça upload de uma planilha no módulo de Tratamento para alimentar o histórico.</p>
+      <a href="tratamento.html" class="btn btn-primary" style="margin-top:1rem;">
+        <i class="bi bi-cloud-arrow-up"></i> Ir para Tratamento
+      </a>
+    </div>
+
+    <!-- PAINEL DE DASHBOARD -->
+    <div class="rhub-layout" id="dashboard-grid" style="display:none;">
+
+      <!-- ================= SEÇÃO 1: LINHA SUPERIOR ABSENTEÍSMO (CASADA EM ALTURA) ================= -->
+      <div class="absenteeism-top-row">
+
+        <!-- CARD UNIFICADO (TOPO ESQUERDO): Resumo Geral de Absenteísmo -->
+        <div class="rhub-card chart-card card-resumo" id="card-resumo-absenteismo">
+          <div class="rhub-card__header">
+            <span class="rhub-card__title">
+              <i class="bi bi-speedometer2"></i> Resumo Geral de Absenteísmo
+            </span>
+          </div>
+          <div class="resumo-body">
+            <!-- BLOCO SUPERIOR: VELOCÍMETRO -->
+            <div class="resumo-block resumo-block--gauge">
+              <span class="resumo-block__label">% Média Geral Absenteísmo</span>
+              <div class="rhub-gauge-wrap" id="gauge-container">
+                <canvas id="gauge-absenteismo"></canvas>
+              </div>
+              <div class="rhub-gauge-foot" id="gauge-foot">Escala 0,00% – 6,00% · Meta 3,00%</div>
+            </div>
+
+            <!-- BLOCO INFERIOR: ROSCA DE JUSTIFICATIVAS (AMPLIADA) -->
+            <div class="resumo-block resumo-block--donut">
+              <span class="resumo-block__label">% Justificativas de Absenteísmo</span>
+              <div class="rhub-donut-wrap chart-container" id="chart-motivos"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CALENDÁRIO (TOPO DIREITO): 4 meses grid sem cortar Sábado -->
+        <div class="rhub-card rhub-cal-card card-calendar">
+          <div class="rhub-card__header">
+            <span class="rhub-card__title">
+              <i class="bi bi-calendar3-event"></i>
+              Calendário de Absenteísmo
+            </span>
+            <div class="rhub-cal-controls no-print">
+              <button type="button" class="rhub-cal-nav" id="cal-prev" title="Meses anteriores">&lsaquo;</button>
+              <button type="button" class="rhub-cal-nav" id="cal-next" title="Próximos meses">&rsaquo;</button>
+              <button type="button" class="btn btn-sm btn-outline" id="cal-ano">Visão Anual completa</button>
+            </div>
+          </div>
+          <div class="rhub-cal-body">
+            <div class="rhub-cal-grid" id="calendario"></div>
+            <div class="rhub-cal-legend">
+              <span><span class="dot dot--verde"></span>Abaixo da meta (&lt; 3,00%)</span>
+              <span><span class="dot dot--amarelo"></span>Atenção (3,00% – 4,00%)</span>
+              <span><span class="dot dot--vermelho"></span>Acima do limite (&gt; 4,00%)</span>
+              <span><span class="dot dot--neutro"></span>Sem expediente / sem dados</span>
+              <span class="text-muted"><i class="bi bi-hand-index-thumb"></i> Clique em um dia para filtrar</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ================= SEÇÃO 1: LINHA INFERIOR ABSENTEÍSMO (3 CARDS LADO A LADO) ================= -->
+      <div class="absenteeism-bottom-row">
+
+        <!-- CARD 1: Ranking Colaboradores (Top 10 limpo) -->
+        <div class="rhub-card card-ranking">
+          <div class="rhub-card__header">
+            <span class="rhub-card__title"><i class="bi bi-people"></i> Ranking de Colaboradores</span>
+            <button type="button" class="btn btn-sm btn-outline btn-expand no-print" id="btn-rank-expand">
+              <i class="bi bi-search"></i> Ver todos
+            </button>
+          </div>
+          <div class="rhub-panel-body" id="lista-colaboradores"></div>
+        </div>
+
+        <!-- CARD 2: % Absenteísmo Mês -->
+        <div class="rhub-card chart-card">
+          <div class="rhub-card__header">
+            <span class="rhub-card__title"><i class="bi bi-graph-up"></i> % Absenteísmo Mês</span>
+          </div>
+          <div class="rhub-panel-body chart-container" id="chart-mes"></div>
+        </div>
+
+        <!-- CARD 3: Percentual Absenteísmo Função -->
+        <div class="rhub-card chart-card">
+          <div class="rhub-card__header">
+            <span class="rhub-card__title"><i class="bi bi-bar-chart"></i> Percentual Absenteísmo Função</span>
+            <button type="button" class="btn btn-sm btn-outline btn-expand no-print" id="btn-funcao-expand">
+              <i class="bi bi-search"></i> Ver todas as funções
+            </button>
+          </div>
+          <div class="rhub-panel-body chart-container" id="chart-funcao"></div>
+        </div>
+
+      </div>
+
+      <!-- ================= SEÇÃO 2: HEADCOUNT & TURNOVER ================= -->
+      <section class="turnover-section" aria-label="Seção Turnover e Headcount">
+
+        <!-- DIVISOR SEÇÃO 2 (TURNOVER) -->
+        <div class="rhub-section-divider rhub-section-divider--turnover" role="separator">
+          <span class="rhub-section-divider__label">TURNOVER</span>
+          <button type="button" class="btn btn-sm btn-outline no-print turnover-section__action" id="btn-digital-turnover">
+            <i class="bi bi-search"></i> Digital do Turnover / Detalhar Registros
+          </button>
+        </div>
+
+        <!-- BANNER DE CRITÉRIOS DE CÁLCULO -->
+        <div class="turnover-criteria" role="note">
+          <i class="bi bi-info-circle-fill turnover-criteria__icon" aria-hidden="true"></i>
+          <div class="turnover-criteria__text">
+            <strong>Critério de Cálculo:</strong> A base do Efetivo Ativo deduz colaboradores em FÉRIAS, LICENÇA MATERNIDADE, LICENÇA PATERNIDADE e INSS.<br>
+            • <strong>Turnover Operacional (Gerenciável):</strong> Faltas/Atestados, Baixa Produtividade, Desvio Comportamental e Pedido de Demissão.<br>
+            • <strong>Redução de Efetivo (Contratual):</strong> Desmobilização de contrato ou redução de quadro solicitada pelo cliente.
+          </div>
+        </div>
+
+        <!-- SUMMARY CARDS: TURNOVER KPIS -->
+        <div class="turnover-kpi-bar" id="turnover-kpis"></div>
+
+        <!-- 4 GRÁFICOS DEDICADOS (GRID 2x2) -->
+        <div class="turnover-grid-2x2">
+
+          <!-- GRÁFICO 1: Headcount & Movimentação -->
+          <div class="rhub-card chart-card">
+            <div class="rhub-card__header">
+              <span class="rhub-card__title"><i class="bi bi-people-fill"></i> Headcount &amp; Movimentação</span>
+            </div>
+            <div class="rhub-panel-body chart-container" id="chart-headcount-movimentacao"></div>
+          </div>
+
+          <!-- GRÁFICO 2: Taxa de Turnover Operacional Isolado (%) -->
+          <div class="rhub-card chart-card">
+            <div class="rhub-card__header">
+              <span class="rhub-card__title"><i class="bi bi-graph-up-arrow"></i> Taxa de Turnover Operacional Isolado (%)</span>
+            </div>
+            <div class="rhub-panel-body chart-container" id="chart-turnover-operacional"></div>
+          </div>
+
+          <!-- GRÁFICO 3: Razão de Reposição (Donut) -->
+          <div class="rhub-card chart-card">
+            <div class="rhub-card__header">
+              <span class="rhub-card__title"><i class="bi bi-pie-chart-fill"></i> Razão de Reposição</span>
+            </div>
+            <div class="rhub-panel-body chart-container" id="chart-razao-reposicao"></div>
+          </div>
+
+          <!-- GRÁFICO 4: Composição Temporal dos Desligamentos (Stacked Bar) -->
+          <div class="rhub-card chart-card">
+            <div class="rhub-card__header">
+              <span class="rhub-card__title"><i class="bi bi-bar-chart-steps"></i> Composição Temporal dos Desligamentos</span>
+            </div>
+            <div class="rhub-panel-body chart-container" id="chart-composicao-desligamentos"></div>
+          </div>
+
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <footer class="app-footer">
+    <small>OMEGA RHUB CT251 — Dashboard de Absenteísmo &amp; Turnover | Persistência SQLite | Filtro de período dinâmico</small>
+  </footer>
+
+  <!-- ============================================================
+       MODAIS (fora do fluxo do layout — ocultos por CSS !important)
+       ============================================================ -->
+
+  <!-- MODAL: Digital do Turnover -->
+  <div class="modal modal-overlay" id="modal-digital-turnover" role="dialog" aria-modal="true" aria-labelledby="digital-turnover-title">
+    <div class="modal modal--wide">
+      <div class="modal-header">
+        <h5 class="modal-title" id="digital-turnover-title">
+          <i class="bi bi-search"></i> Digital do Turnover — Registros no período
+        </h5>
+        <button type="button" class="modal-close" id="btn-digital-close" aria-label="Fechar">
+          <i class="bi bi-x-lg"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small" id="digital-turnover-periodo">—</p>
+        <div class="table-responsive">
+          <table class="table" id="tabela-digital-turnover">
+            <thead>
+              <tr>
+                <th>Colaborador</th>
+                <th>Função</th>
+                <th>Data</th>
+                <th>Motivo Declarado</th>
+                <th>Classificação</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div id="digital-turnover-vazio" class="text-muted small" style="display:none; padding: 1rem 0;">
+          Nenhum desligamento no período selecionado.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" id="btn-digital-fechar">Fechar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Ranking Completo de Colaboradores -->
+  <div class="modal modal-overlay" id="modal-ranking" role="dialog" aria-modal="true" aria-labelledby="ranking-modal-title">
+    <div class="modal modal--wide">
+      <div class="modal-header">
+        <h5 class="modal-title" id="ranking-modal-title">
+          <i class="bi bi-people"></i> Ranking Completo de Colaboradores
+        </h5>
+        <button type="button" class="modal-close" id="btn-ranking-close" aria-label="Fechar">
+          <i class="bi bi-x-lg"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="table-responsive">
+          <table class="table" id="tabela-ranking-modal">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Colaborador</th>
+                <th>Faltas/Atestados</th>
+                <th>Dias Previstos</th>
+                <th>% Absenteísmo</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" id="btn-ranking-fechar">Fechar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- CÓDIGO DA APLICAÇÃO (após DOM — vendors já carregados no <head>) -->
+  <script src="js/dashboard.js"></script>
+</body>
+</html>
