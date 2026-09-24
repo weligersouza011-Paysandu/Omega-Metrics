@@ -20,7 +20,7 @@ const STATUS_CONFIG = {
   ISENCAO: {
     lista: [
       "COMPENSAÇÃO", "FÉRIAS", "FOLGA", "EXAME PERIÓDICO",
-      "LICENÇA MATERNIDADE", "INSS", "AGUARDANDO CRACHÁ"
+      "LICENÇA MATERNIDADE", "INSS", "AGUARDANDO CRACHÁ", "TREINAMENTO"
     ],
     badgeClass: "badge-secondary",
     bgHex: "#6B7280",

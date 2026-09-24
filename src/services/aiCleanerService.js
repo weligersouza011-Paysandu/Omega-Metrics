@@ -30,7 +30,8 @@ const STATUS_CANONICOS = {
   'medico': 'Médico',
   'médico': 'Médico',
   'periodico': 'Periódico',
-  'periódico': 'Periódico'
+  'periódico': 'Periódico',
+  'treinamento': 'Treinamento'
 };
 
 const MOTIVO_CATEGORIAS = {
@@ -261,7 +262,7 @@ async function callGeminiForCleaning(unresolvedItems) {
       'Retorne APENAS um array JSON, na mesma ordem, com os textos corrigidos.\n\n' +
       'Valores de status devem ser: Falta sem justificativa, Advertência, Atestado, Atestado de Óbito, ' +
       'Boletim de Ocorrência, Declaração, Declaração Banco, Exame, Exame Médico, ' +
-      'Licença Casamento, Licença Maternidade, Licença Paternidade, Médico, Periódico.\n\n' +
+      'Licença Casamento, Licença Maternidade, Licença Paternidade, Médico, Periódico, Treinamento.\n\n' +
       'Valores de motivo devem ser: ALTO ÍNDICE DE ABSENTEÍSMO, BAIXA PRODUTIVIDADE, ' +
       'PEDIDO DE DEMISSÃO, DESVIO COMPORTAMENTAL, REDUÇÃO DE QUADRO (EFETIVO).\n\n' +
       'Itens:\n' + itemsText;
