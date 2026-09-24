@@ -4,7 +4,7 @@
   // Base dinâmica da API: local vazio; hospedado (Render/GH Pages) aponta ao backend
   var API_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
     ? ''
-    : 'https://seu-backend.onrender.com';
+    : 'https://omega-metrics1.onrender.com';
 
   var selectedDate = null;
   var lastCounts = null;
