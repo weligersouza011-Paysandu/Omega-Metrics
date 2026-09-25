@@ -10,10 +10,10 @@ const { Pool } = require('pg');
 const { initDatabase, createLote, getLote, confirmLote,
   upsertPontoHistorico, insertDesligamentosJustificados, updateCalendario,
   getPontoHistorico, getDesligamentosHistorico, getCalendarioDatas,
-  getPeriodoLimites, getEfetivoTotal, getTurnoverCounts,
+  getPeriodoLimites, getEfetivoTotal,
   countByDate, getByDate, deleteByDate, formatHorarioValue } = require('./src/database/dbService');
 
-const { parseExcelFiles, validateData, validatePontoRow, applyCorrecoes, toPontoDataShape, toDesligDataShape, calculateMetrics, formatExcelDate, excelDecimalToTime, STATUS_CONFIG, STATUS_ALIASES, getStatusMeta, calcularAbsenteismo, calcEfetivoAtivoPorMes, calcTurnoverMensal, calcTurnoverPorFuncao, META_TURNOVER_GERAL, META_TURNOVER_OPERACIONAL, MOTIVOS_TURNOVER_RELEVANTES } = require('./src/services/tratamentoService');
+const { parseExcelFiles, validateData, validatePontoRow, applyCorrecoes, toPontoDataShape, toDesligDataShape, calculateMetrics, formatExcelDate, excelDecimalToTime, STATUS_CONFIG, STATUS_ALIASES, getStatusMeta, calcularAbsenteismo, calcEfetivoAtivoPorMes, calcTurnoverMensal, calcTurnoverPorFuncao, applyCrossFilters, applyCrossFiltersDeslig, temFiltro, META_TURNOVER_GERAL, META_TURNOVER_OPERACIONAL, MOTIVOS_TURNOVER_RELEVANTES } = require('./src/services/tratamentoService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -282,7 +282,7 @@ app.get('/api/dashboard/datas-disponiveis', async (req, res) => {
 
 app.get('/api/dashboard/kpis', async (req, res) => {
   try {
-    const { dataInicio, dataFim, status } = req.query;
+    const { dataInicio, dataFim, status, dia, mes, colaborador, funcao } = req.query;
 
     if (!dataInicio || !dataFim) {
       return res.status(400).json({ success: false, error: 'Parâmetros dataInicio e dataFim são obrigatórios.' });
@@ -290,26 +290,55 @@ app.get('/api/dashboard/kpis', async (req, res) => {
 
     const pontoRows = await getPontoHistorico(dataInicio, dataFim);
     const desligRows = await getDesligamentosHistorico(dataInicio, dataFim);
-    const efetivoTotal = await getEfetivoTotal(dataInicio, dataFim);
-    const turnoverCounts = await getTurnoverCounts(dataInicio, dataFim);
+    const efetivoTotalPeriodo = await getEfetivoTotal(dataInicio, dataFim);
 
-    let pontoData = toPontoDataShape(pontoRows);
-    const desligData = toDesligDataShape(desligRows);
+    // --- FILTROS GLOBAIS (cross-filter) ------------------------------------
+    // `status` = justificativa (fatias da rosca); `dia`, `mes`, `colaborador`
+    // e `funcao` vêm dos cliques no calendário e nos 3 gráficos inferiores.
+    const str = v => (typeof v === 'string' && v.trim() ? v.trim() : null);
+    const diaStr = str(dia);
+    const mesStr = str(mes);
+    const cross = {
+      status: str(status),
+      dia: diaStr && /^\d{4}-\d{2}-\d{2}$/.test(diaStr) ? diaStr : null,
+      mes: mesStr && /^\d{4}-\d{2}$/.test(mesStr) ? mesStr : null,
+      colaborador: str(colaborador),
+      funcao: str(funcao)
+    };
 
-    // Filtro opcional por status (clique nas fatias da rosca de justificativas):
-    // recalcula os KPIs de absenteísmo apenas sobre as linhas daquele status.
-    // `semDados` continua baseado em pontoRows/desligRows NÃO filtrados.
-    const statusFilter = typeof status === 'string' && status.trim() ? status.trim() : null;
-    if (statusFilter) {
-      pontoData = pontoData.filter(row => getStatusMeta(row && row.status).label === statusFilter);
-    }
+    const baseRows = toPontoDataShape(pontoRows);
 
-    const { kpis, graficos } = calculateMetrics(pontoData, desligData, efetivoTotal);
+    // Desligamentos na foto do filtro cruzado (`status` é ignorado: não há
+    // justificativa de ponto correspondente a motivo de desligamento)
+    const desligRowsFiltradas = applyCrossFiltersDeslig(desligRows, cross);
+    const desligData = toDesligDataShape(desligRowsFiltradas);
+
+    // Efetivo total: foto do filtro sem o `status` (a query por período nunca
+    // foi afetada pelo filtro de status — comportamento histórico preservado)
+    const crossSemStatus = { status: null, dia: cross.dia, mes: cross.mes, colaborador: cross.colaborador, funcao: cross.funcao };
+    const efetivoTotal = temFiltro(crossSemStatus)
+      ? new Set(
+          applyCrossFilters(baseRows, crossSemStatus)
+            .map(r => String(r.chaveFuncionario || '').trim())
+            .filter(Boolean)
+        ).size
+      : efetivoTotalPeriodo;
+
+    const { kpis, graficos } = calculateMetrics(baseRows, desligData, efetivoTotal, cross);
 
     // --- Turnover sobre Efetivo Ativo (deduz LICENÇA PATERNIDADE/MATERNIDADE/FÉRIAS/INSS) ---
-    const efetivoAtivo = calcEfetivoAtivoPorMes(pontoData);
+    const pontoCross = applyCrossFilters(baseRows, cross);
+    const efetivoAtivo = calcEfetivoAtivoPorMes(pontoCross);
     const turnoverMensal = calcTurnoverMensal(desligData, efetivoAtivo.porMes);
-    const turnoverPorFuncao = calcTurnoverPorFuncao(pontoData, desligData);
+    const turnoverPorFuncao = calcTurnoverPorFuncao(pontoCross, desligData);
+
+    // Contagens operacional/reducao: mesmo critério `conta_turnover` da
+    // consulta do banco, porém sobre as linhas já cruzadas pelo filtro
+    const turnoverCounts = { operacional: 0, reducao: 0 };
+    for (const r of desligRowsFiltradas) {
+      if (Number(r.conta_turnover) === 1) turnoverCounts.operacional++;
+      else turnoverCounts.reducao++;
+    }
     const totalDeslig = turnoverCounts.operacional + turnoverCounts.reducao;
     const pct = (n, d) => (d > 0 ? parseFloat(((n / d) * 100).toFixed(2)) : 0);
 

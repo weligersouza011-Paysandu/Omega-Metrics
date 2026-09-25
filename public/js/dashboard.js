@@ -38,13 +38,21 @@
   var periodoMax = null;
   var currentRange = { inicio: null, fim: null };
   var debounceTimer = null;
+  // Base completa (sem filtro cruzado) e mapa de exibição do calendário.
+  // Com filtro ativo a resposta vem parcial: vira mapPorDia (dias sem dado
+  // ficam neutros); sem filtro a exibição é a própria base (merge preserva
+  // as cores do período inteiro).
   var mapPorDia = {};
+  var mapPorDiaBase = {};
   var calState = { ano: null, mes: null, anual: false };
 
-  var dayFilter = null;
-  var periodBeforeDayFilter = null;
+  // Filtro global cruzado: um único estado para todos os componentes.
+  // Cada componente é filtrado por TODAS as dimensões ativas EXCETO a
+  // própria (regra de escopo) — assim ele mantém as opções visíveis para
+  // alternar/limpar o clique. Mesma regra em applyCrossFilters (servidor)
+  // e matchFiltroLocal (fallback LocalStorage).
+  var globalFilter = { dia: null, mes: null, colaborador: null, funcao: null, justificativa: null };
   var suppressSliderChange = false;
-  var statusFilter = null;
   var inflightCtrl = null;
 
   var funcaoExpanded = false;
@@ -94,6 +102,8 @@
       setupDigitalTurnover();
       setupDayChip();
       setupStatusChip();
+      setupCrossChip();
+      setupRankingClick();
       setupExportPdf();
     } catch (e) {
       console.error('Erro durante o setup do dashboard (renderização segue):', e);
@@ -192,6 +202,103 @@
 
   function pctBr(v) {
     return (Number(v) || 0).toFixed(2).replace('.', ',') + '%';
+  }
+
+  /* ============================================================
+     1B. FILTRO GLOBAL CRUZADO (cross-filter)
+     ============================================================ */
+
+  var MESES_CURTO = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+
+  function normLocal(v) {
+    return String(v == null ? '' : v).trim().replace(/\s+/g, ' ').toUpperCase();
+  }
+
+  function fmtMesLabel(chave) {
+    var p = String(chave || '').split('-');
+    if (p.length !== 2) return String(chave || '');
+    var mes = MESES_CURTO[parseInt(p[1], 10) - 1] || p[1];
+    return mes + '/' + p[0].slice(2);
+  }
+
+  // Query string com os filtros globais ativos
+  function crossFilterQuery() {
+    var q = '';
+    if (globalFilter.justificativa) q += '&status=' + encodeURIComponent(globalFilter.justificativa);
+    if (globalFilter.dia) q += '&dia=' + encodeURIComponent(globalFilter.dia);
+    if (globalFilter.mes) q += '&mes=' + encodeURIComponent(globalFilter.mes);
+    if (globalFilter.colaborador) q += '&colaborador=' + encodeURIComponent(globalFilter.colaborador);
+    if (globalFilter.funcao) q += '&funcao=' + encodeURIComponent(globalFilter.funcao);
+    return q;
+  }
+
+  // Algum filtro que encolhe a resposta do calendário? (o filtro de dia é
+  // pulado pelo servidor no calendário — só os demais geram foto parcial)
+  function crossFilterParcial() {
+    return !!(globalFilter.justificativa || globalFilter.mes ||
+      globalFilter.colaborador || globalFilter.funcao);
+  }
+
+  // Liga/desliga uma dimensão do filtro e recarrega o dashboard inteiro
+  function toggleCrossFilter(key, value) {
+    var atual = globalFilter[key];
+    globalFilter[key] = (atual && normLocal(atual) === normLocal(value)) ? null : value;
+    syncFilterChips();
+    fetchDashboardData({ background: true, filterChange: true });
+  }
+
+  function clearCrossFilters() {
+    globalFilter.colaborador = null;
+    globalFilter.funcao = null;
+    globalFilter.mes = null;
+    syncFilterChips();
+    fetchDashboardData({ background: true, filterChange: true });
+  }
+
+  // Chips da barra de filtros (dia, justificativa e cruzados)
+  function syncFilterChips() {
+    updateDayChip();
+    updateStatusChip();
+    updateCrossChip();
+    // Seleção do calendário acompanha o filtro de dia imediatamente
+    setCalSelectedDay(globalFilter.dia);
+    // Destaque do ranking acompanha a seleção imediatamente
+    refreshRankingSelection();
+  }
+
+  function updateCrossChip() {
+    var chip = document.getElementById('cross-filter-chip');
+    if (!chip) return;
+    var partes = [];
+    if (globalFilter.colaborador) partes.push('Colaborador: ' + globalFilter.colaborador);
+    if (globalFilter.funcao) partes.push('Função: ' + globalFilter.funcao);
+    if (globalFilter.mes) partes.push('Mês: ' + fmtMesLabel(globalFilter.mes));
+    if (partes.length) {
+      chip.style.display = 'inline-flex';
+      var txt = document.getElementById('cross-filter-chip-text');
+      if (txt) txt.textContent = partes.join(' · ');
+    } else {
+      chip.style.display = 'none';
+    }
+  }
+
+  function setupCrossChip() {
+    var btn = document.getElementById('cross-chip-clear');
+    if (btn) btn.addEventListener('click', clearCrossFilters);
+  }
+
+  // Regra de escopo do filtro local (fallback sem servidor): mesma matriz
+  // do backend — cada componente pula a própria dimensão.
+  function matchFiltroLocal(r, skip, nome, cargo) {
+    var f = globalFilter;
+    if (skip !== 'justificativa' && f.justificativa &&
+        normLocal(r.status) !== normLocal(f.justificativa)) return false;
+    if (skip !== 'dia' && f.dia && r.dia !== f.dia) return false;
+    if (skip !== 'mes' && f.mes && String(r.dia || '').substring(0, 7) !== f.mes) return false;
+    if (skip !== 'colaborador' && f.colaborador &&
+        normLocal(nome) !== normLocal(f.colaborador)) return false;
+    if (skip !== 'funcao' && f.funcao && normLocal(cargo) !== normLocal(f.funcao)) return false;
+    return true;
   }
 
   /* ============================================================
@@ -342,7 +449,7 @@
     inflightCtrl = ctrl;
 
     var url = API_URL + '/api/dashboard/kpis?dataInicio=' + currentRange.inicio + '&dataFim=' + currentRange.fim;
-    if (statusFilter) url += '&status=' + encodeURIComponent(statusFilter);
+    url += crossFilterQuery();
 
     fetch(url, { signal: ctrl.signal })
       .then(function (res) { return res.json(); })
@@ -352,8 +459,7 @@
         if (!data.success || data.semDados) {
           // Período vazio (ou erro): recai no LocalStorage / estado vazio.
           // Clique de filtro mantém a visão anterior (evita "pisca").
-          var isFilterClick = !!(opts.dayFilterChange || opts.statusFilterChange);
-          if (!isFilterClick) tryLocalStorageFallback();
+          if (!opts.filterChange) tryLocalStorageFallback();
           return;
         }
         showGrid();
@@ -422,52 +528,118 @@
     var funcsUnicos = new Set();
     var desligamentos = [];
 
-    records.forEach(function (r) {
+    function nomeDe(r) { return r.funcionario || r.nome || r.nomeFuncionario || 'Não Identificado'; }
+    function cargoDe(r) { return r.funcao || r.cargo || r.nomeCargo || 'Não Definido'; }
+    function isFaltaDe(r) {
       var st = (r.status || '').toUpperCase().trim();
-      var fName = r.funcionario || r.nome || r.nomeFuncionario || 'Não Identificado';
-      var funcCargo = r.funcao || r.cargo || r.nomeCargo || 'Não Definido';
+      return statusFaltas.indexOf(st) !== -1;
+    }
+    function isPresencaDe(r) {
+      var st = (r.status || '').toUpperCase().trim();
+      return statusPresenca.indexOf(st) !== -1 || (!st && r.entrada1);
+    }
+
+    // Cada componente tem sua própria passagem com a regra de escopo
+    // (matchFiltroLocal com o `skip` da dimensão), igual ao servidor.
+
+    // Efetivo — mesmos filtros, exceto justificativa (como a query do banco)
+    records.forEach(function (r) {
+      var nome = nomeDe(r);
+      if (matchFiltroLocal(r, 'justificativa', nome, cargoDe(r))) funcsUnicos.add(nome);
+    });
+
+    // Justificativas (rosca) — pula o próprio status
+    records.forEach(function (r) {
+      if (!matchFiltroLocal(r, 'justificativa', nomeDe(r), cargoDe(r))) return;
+      var st = (r.status || '').toUpperCase().trim();
+      if (st) statusCounts[st] = (statusCounts[st] || 0) + 1;
+    });
+
+    // KPI de absenteísmo — todos os filtros (demitidos seguem excluídos,
+    // como sempre foi neste fallback)
+    records.forEach(function (r) {
+      var nome = nomeDe(r);
+      if (!matchFiltroLocal(r, null, nome, cargoDe(r))) return;
+      if (ehDemitidoAtual(nome)) return;
+      if (isFaltaDe(r)) totalFaltas++;
+      else if (isPresencaDe(r)) totalPresencas++;
+    });
+
+    // Calendário — pula o dia (a seleção fica só no destaque)
+    records.forEach(function (r) {
+      var nome = nomeDe(r);
+      if (!matchFiltroLocal(r, 'dia', nome, cargoDe(r))) return;
+      if (ehDemitidoAtual(nome)) return;
+      if (!isFaltaDe(r) && !isPresencaDe(r)) return;
+      var d = r.dia;
+      if (!diaMap[d]) diaMap[d] = { data: d, faltas: 0, previstos: 0, percentual: 0 };
+      diaMap[d].previstos++;
+      if (isFaltaDe(r)) diaMap[d].faltas++;
+    });
+
+    // Ranking — pula o colaborador
+    records.forEach(function (r) {
+      var nome = nomeDe(r);
+      if (!matchFiltroLocal(r, 'colaborador', nome, cargoDe(r))) return;
+      if (ehDemitidoAtual(nome)) return;
+      if (!isFaltaDe(r) && !isPresencaDe(r)) return;
+      if (!funcMap[nome]) funcMap[nome] = { nome: nome, faltas: 0, previstos: 0, percentual: 0 };
+      funcMap[nome].previstos++;
+      if (isFaltaDe(r)) funcMap[nome].faltas++;
+    });
+
+    // Gráfico de mês — pula o mês (todas as colunas seguem visíveis)
+    records.forEach(function (r) {
+      var nome = nomeDe(r);
+      if (!matchFiltroLocal(r, 'mes', nome, cargoDe(r))) return;
+      if (ehDemitidoAtual(nome)) return;
+      if (!isFaltaDe(r) && !isPresencaDe(r)) return;
       var d = r.dia;
       var mesKey = d ? d.substring(0, 7) : 'Geral';
-
-      funcsUnicos.add(fName);
-
-      if (st) statusCounts[st] = (statusCounts[st] || 0) + 1;
-
-      var isFalta = statusFaltas.indexOf(st) !== -1;
-      var isPresenca = statusPresenca.indexOf(st) !== -1 || (!st && r.entrada1);
-
-      if ((isFalta || isPresenca) && !ehDemitidoAtual(fName)) {
-        if (!diaMap[d]) diaMap[d] = { data: d, faltas: 0, previstos: 0, percentual: 0 };
-        diaMap[d].previstos++;
-        if (isFalta) {
-          diaMap[d].faltas++;
-          totalFaltas++;
-        } else {
-          totalPresencas++;
-        }
-
-        if (!funcMap[fName]) funcMap[fName] = { nome: fName, faltas: 0, previstos: 0, percentual: 0 };
-        funcMap[fName].previstos++;
-        if (isFalta) funcMap[fName].faltas++;
-
-        if (!mesMap[mesKey]) mesMap[mesKey] = { label: mesKey, faltas: 0, previstos: 0, value: 0 };
-        mesMap[mesKey].previstos++;
-        if (isFalta) mesMap[mesKey].faltas++;
-
-        if (!funcaoMap[funcCargo]) funcaoMap[funcCargo] = { label: funcCargo, faltas: 0, previstos: 0, value: 0 };
-        funcaoMap[funcCargo].previstos++;
-        if (isFalta) funcaoMap[funcCargo].faltas++;
+      if (!mesMap[mesKey]) {
+        mesMap[mesKey] = {
+          label: mesKey,
+          chave: /^\d{4}-\d{2}$/.test(mesKey) ? mesKey : null,
+          faltas: 0, previstos: 0, value: 0
+        };
       }
+      mesMap[mesKey].previstos++;
+      if (isFaltaDe(r)) mesMap[mesKey].faltas++;
+    });
 
-      if (st === 'DEMITIDO' || st.indexOf('DEMISS') !== -1 || st.indexOf('DESLIG') !== -1) {
-        desligamentos.push({
-          nome: fName,
-          funcao: funcCargo,
-          data: d,
-          motivo: r.cid || st,
-          classificacao: 'Operacional'
-        });
-      }
+    // Por função — pula a própria função
+    records.forEach(function (r) {
+      var nome = nomeDe(r);
+      var cargo = cargoDe(r);
+      if (!matchFiltroLocal(r, 'funcao', nome, cargo)) return;
+      if (ehDemitidoAtual(nome)) return;
+      if (!isFaltaDe(r) && !isPresencaDe(r)) return;
+      if (!funcaoMap[cargo]) funcaoMap[cargo] = { label: cargo, faltas: 0, previstos: 0, value: 0 };
+      funcaoMap[cargo].previstos++;
+      if (isFaltaDe(r)) funcaoMap[cargo].faltas++;
+    });
+
+    // Desligamentos (turnover) — filtros cruzados sem justificativa
+    records.forEach(function (r) {
+      var st = (r.status || '').toUpperCase().trim();
+      var ehDeslig = st === 'DEMITIDO' || st.indexOf('DEMISS') !== -1 ||
+        st.indexOf('DESLIG') !== -1;
+      if (!ehDeslig) return;
+      var nome = nomeDe(r);
+      var cargo = cargoDe(r);
+      var d = r.dia;
+      var f = globalFilter;
+      if (f.dia && d !== f.dia) return;
+      if (f.mes && String(d || '').substring(0, 7) !== f.mes) return;
+      if (f.colaborador && normLocal(nome) !== normLocal(f.colaborador)) return;
+      if (f.funcao && normLocal(cargo) !== normLocal(f.funcao)) return;
+      desligamentos.push({
+        nome: nome,
+        funcao: cargo,
+        data: d,
+        motivo: r.cid || st,
+        classificacao: 'Operacional'
+      });
     });
 
     var totalPrevistos = totalFaltas + totalPresencas;
@@ -671,16 +843,21 @@
     renderGauge(k.absenteismo ? k.absenteismo.percentual : 0);
     renderMotivos(g.absenteismoPorStatus || []);
 
-    // 2. Calendário de Absenteísmo — o merge (sem reset) preserva as cores
-    //    dos dias do período. Com filtros de dia/status ativos, os dados
-    //    vêm parciais: não se mexe no calendário (só sincroniza seleção).
-    if (!opts.dayFilterChange && !opts.statusFilterChange) {
+    // 2. Calendário de Absenteísmo — sem filtro cruzado o merge (sem reset)
+    //    preserva as cores dos dias do período inteiro (base = exibição).
+    //    Com filtro parcial a resposta traz só a foto: vira o mapa de
+    //    exibição e os dias sem dado daquele filtro ficam neutros.
+    var parcial = crossFilterParcial();
+    (g.absenteismoPorDia || []).forEach(function (d) {
+      if (!parcial) mapPorDiaBase[d.data] = d;
+    });
+    if (parcial) {
+      mapPorDia = {};
       (g.absenteismoPorDia || []).forEach(function (d) { mapPorDia[d.data] = d; });
-      renderCalendario();
     } else {
-      // Filtro rápido: não reconstrói o DOM — só sincroniza a seleção
-      setCalSelectedDay(dayFilter);
+      mapPorDia = mapPorDiaBase;
     }
+    renderCalendario();
 
     // 3. Linha Inferior de Absenteísmo
     renderRanking(g.absenteismoPorFuncionario || []);
@@ -695,6 +872,9 @@
     renderTurnoverOperacional(g.turnoverMensal || [], k.turnover || {});
     renderRazaoReposicao(g.turnoverMensal || []);
     renderComposicaoDesligamentos(g.turnoverMensal || []);
+
+    // Chips acompanham o estado (inclusive no fallback LocalStorage)
+    syncFilterChips();
   }
 
   /* ============================================================
@@ -873,6 +1053,7 @@
 
     var paletaMotivos = [CORES.vinho, CORES.vermelho, CORES.ambar, CORES.verde, CORES.roxo, CORES.azul, CORES.cinza];
     var total = rows.reduce(function (s, d) { return s + (Number(d.value) || 0); }, 0);
+    var justSel = globalFilter.justificativa;
 
     var plugins = [donutCenterPlugin];
     if (typeof ChartDataLabels !== 'undefined') plugins.push(ChartDataLabels);
@@ -883,12 +1064,18 @@
         labels: rows.map(function (d) { return d.label; }),
         datasets: [{
           data: rows.map(function (d) { return d.value; }),
-          backgroundColor: paletaMotivos.slice(0, rows.length),
+          backgroundColor: rows.map(function (d, i) {
+            // Com justificativa ativa, a fatia escolhida ganha destaque e
+            // as demais desbotam (todas continuam clicáveis)
+            var base = paletaMotivos[i % paletaMotivos.length];
+            if (justSel && d.label !== justSel) return base + '59';
+            return base;
+          }),
           borderWidth: rows.map(function (d) {
-            return (statusFilter && d.label === statusFilter) ? 4 : 2;
+            return (justSel && d.label === justSel) ? 4 : 2;
           }),
           borderColor: rows.map(function (d) {
-            return (statusFilter && d.label === statusFilter) ? CORES.vinho : '#ffffff';
+            return (justSel && d.label === justSel) ? CORES.vinho : '#ffffff';
           })
         }]
       },
@@ -947,40 +1134,38 @@
 
     updateChart('chart-motivos', 'canvas-motivos', config, {
       total: total,
-      filteredLabel: statusFilter ? 'filtrado' : 'ocorrências'
+      filteredLabel: globalFilter.justificativa ? 'filtrado' : 'ocorrências'
     });
   }
 
-  // ---- FILTRO POR STATUS (clique nas fatias da rosca) ----
+  // ---- FILTRO POR JUSTIFICATIVA (clique nas fatias da rosca) ----
   function toggleStatusFilter(label) {
-    statusFilter = (statusFilter === label) ? null : label;
-    updateStatusChip();
-    fetchDashboardData({ background: true, statusFilterChange: true });
+    toggleCrossFilter('justificativa', label);
   }
 
   function updateStatusChip() {
     var chip = document.getElementById('status-filter-chip');
     if (chip) {
-      if (statusFilter) {
+      if (globalFilter.justificativa) {
         chip.style.display = 'inline-flex';
         var txt = document.getElementById('status-filter-chip-text');
-        if (txt) txt.textContent = statusFilter;
+        if (txt) txt.textContent = globalFilter.justificativa;
       } else {
         chip.style.display = 'none';
       }
     }
     var wrap = document.getElementById('chart-motivos');
-    if (wrap) wrap.classList.toggle('is-filtered', !!statusFilter);
+    if (wrap) wrap.classList.toggle('is-filtered', !!globalFilter.justificativa);
   }
 
   function setupStatusChip() {
     var btn = document.getElementById('status-chip-clear');
     if (!btn) return;
     btn.addEventListener('click', function () {
-      if (!statusFilter) return;
-      statusFilter = null;
-      updateStatusChip();
-      fetchDashboardData({ background: true, statusFilterChange: true });
+      if (!globalFilter.justificativa) return;
+      globalFilter.justificativa = null;
+      syncFilterChips();
+      fetchDashboardData({ background: true, filterChange: true });
     });
   }
 
@@ -1057,7 +1242,7 @@
       el.title = '';
     }
 
-    if (dayFilter === iso) el.classList.add('cal-day--selected');
+    if (globalFilter.dia === iso) el.classList.add('cal-day--selected');
   }
 
   // Atualização in-place: percorre as células já renderizadas
@@ -1197,49 +1382,43 @@
     var iso = target.dataset.iso;
     if (!iso) return;
 
-    if (dayFilter === iso) {
+    if (globalFilter.dia === iso) {
       clearDayFilter();
     } else {
       applyDayFilter(iso);
     }
   }
 
+  // Filtro de dia: mais uma dimensão do filtro global (?dia=) — o período
+  // (slider/flatpickr) permanece intacto e o calendário mantém a grade
+  // completa com o dia selecionado destacado.
   function applyDayFilter(iso) {
-    dayFilter = iso;
-    periodBeforeDayFilter = { inicio: currentRange.inicio, fim: currentRange.fim };
-    currentRange.inicio = iso;
-    currentRange.fim = iso;
-
-    var chip = document.getElementById('day-filter-chip');
-    if (chip) {
-      chip.style.display = 'inline-flex';
-      var txt = chip.querySelector('.day-chip__text');
-      if (txt) txt.textContent = iso.split('-').reverse().join('/');
-    }
-
-    // Seleção visual imediata (o fetch confirmará em seguida)
-    setCalSelectedDay(iso);
+    globalFilter.dia = iso;
+    syncFilterChips();
 
     // Sempre busca do servidor; LocalStorage permanece apenas como
     // fallback dentro de fetchDashboardData() (erro/vazio real).
     // background: mantém o grid visível (sem spinner full-screen).
-    fetchDashboardData({ background: true, dayFilterChange: true });
+    fetchDashboardData({ background: true, filterChange: true });
   }
 
   function clearDayFilter() {
-    if (!dayFilter) return;
-    dayFilter = null;
-    if (periodBeforeDayFilter) {
-      currentRange.inicio = periodBeforeDayFilter.inicio;
-      currentRange.fim = periodBeforeDayFilter.fim;
-    }
+    if (!globalFilter.dia) return;
+    globalFilter.dia = null;
+    syncFilterChips();
+    fetchDashboardData({ background: true, filterChange: true });
+  }
+
+  function updateDayChip() {
     var chip = document.getElementById('day-filter-chip');
-    if (chip) chip.style.display = 'none';
-
-    setCalSelectedDay(null);
-    updateSliderFromInputs();
-
-    fetchDashboardData({ background: true, dayFilterChange: true });
+    if (!chip) return;
+    if (globalFilter.dia) {
+      chip.style.display = 'inline-flex';
+      var txt = chip.querySelector('.day-chip__text');
+      if (txt) txt.textContent = globalFilter.dia.split('-').reverse().join('/');
+    } else {
+      chip.style.display = 'none';
+    }
   }
 
   function setupDayChip() {
@@ -1248,6 +1427,14 @@
   }
 
   // RANKING DE COLABORADORES
+  function escapeHtml(v) {
+    return String(v == null ? '' : v)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
   function renderRanking(rows) {
     lastRankingRows = rows || [];
     var container = document.getElementById('lista-colaboradores');
@@ -1259,13 +1446,17 @@
       return;
     }
 
+    var sel = globalFilter.colaborador ? normLocal(globalFilter.colaborador) : null;
     var top10 = rows.slice(0, TOP_RANKING);
     var html = '<div class="ranking-list">';
     top10.forEach(function (item, idx) {
+      var nome = escapeHtml(item.nome);
+      var selecionado = !!sel && normLocal(item.nome) === sel;
       html +=
-        '<div class="ranking-item">' +
+        '<div class="ranking-item' + (selecionado ? ' ranking-item--selected' : '') + '"' +
+          ' data-nome="' + nome + '" title="Clique para filtrar o dashboard">' +
           '<span class="ranking-item__pos">#' + (idx + 1) + '</span>' +
-          '<span class="ranking-item__name" title="' + item.nome + '">' + item.nome + '</span>' +
+          '<span class="ranking-item__name">' + nome + '</span>' +
           '<span class="ranking-item__val">' + pctBr(item.percentual) + ' (' + item.faltas + 'f)</span>' +
         '</div>';
     });
@@ -1275,6 +1466,32 @@
     if (container.dataset.sig !== html) {
       container.innerHTML = html;
       container.dataset.sig = html;
+    }
+  }
+
+  // Delegação única: as linhas são reescritas a cada render, mas o listener
+  // fica no container (mesma estratégia do calendário).
+  function setupRankingClick() {
+    var container = document.getElementById('lista-colaboradores');
+    if (!container) return;
+    if (container.dataset.delegation === '1') return;
+    container.dataset.delegation = '1';
+    container.addEventListener('click', function (e) {
+      var item = e.target && e.target.closest ? e.target.closest('.ranking-item[data-nome]') : null;
+      if (!item) return;
+      toggleCrossFilter('colaborador', item.dataset.nome);
+    });
+  }
+
+  // Destaque imediato da linha selecionada (antes do fetch responder)
+  function refreshRankingSelection() {
+    var container = document.getElementById('lista-colaboradores');
+    if (!container) return;
+    var sel = globalFilter.colaborador ? normLocal(globalFilter.colaborador) : null;
+    var itens = container.querySelectorAll('.ranking-item[data-nome]');
+    for (var i = 0; i < itens.length; i++) {
+      var el = itens[i];
+      el.classList.toggle('ranking-item--selected', !!sel && normLocal(el.dataset.nome) === sel);
     }
   }
 
@@ -1309,6 +1526,9 @@
   }
 
   // ABSENTEÍSMO MÊS
+  // Sem eixo Y: só as colunas com o data label exato em cima. O clique na
+  // coluna filtra o dashboard inteiro para aquele mês (o período/slider
+  // permanece intacto e todas as colunas seguem visíveis para trocar).
   function renderAbsenteismoMes(rows) {
     var container = document.getElementById('chart-mes');
     if (!container) return;
@@ -1318,6 +1538,8 @@
       return;
     }
 
+    var selMes = globalFilter.mes;
+
     updateChart('chart-mes', 'canvas-mes', {
       type: 'bar',
       data: {
@@ -1325,13 +1547,30 @@
         datasets: [{
           label: '% Absenteísmo',
           data: rows.map(function (d) { return d.value; }),
-          backgroundColor: '#718096',
+          backgroundColor: rows.map(function (d) {
+            if (selMes) return d.chave === selMes ? CORES.vinho : '#cbd5e1';
+            return '#718096';
+          }),
+          hoverBackgroundColor: rows.map(function (d) {
+            if (selMes) return d.chave === selMes ? CORES.vinho : '#94a3b8';
+            return '#8b9cb3';
+          }),
           borderRadius: 4
         }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
+        onHover: function (e, elements) {
+          if (e.native && e.native.target) {
+            e.native.target.style.cursor = (elements && elements.length) ? 'pointer' : 'default';
+          }
+        },
+        onClick: function (e, elements) {
+          if (!elements || !elements.length) return;
+          var alvo = rows[elements[0].index];
+          if (alvo && alvo.chave) toggleCrossFilter('mes', alvo.chave);
+        },
         plugins: {
           legend: { display: false },
           datalabels: {
@@ -1353,11 +1592,14 @@
           x: {
             grid: { display: false }
           },
+          // Sem eixo Y: a altura continua proporcionar e o valor aparece
+          // apenas no data label sobre a coluna
           y: {
+            display: false,
             beginAtZero: true,
             grace: '12%',
             grid: { display: false },
-            ticks: { callback: function (v) { return v + '%'; } }
+            ticks: { display: false }
           }
         }
       }
@@ -1365,6 +1607,8 @@
   }
 
   // ABSENTEÍSMO FUNÇÃO
+  // O clique na barra filtra Ranking/Calendário/etc. para aquela função;
+  // o próprio gráfico mantém todas as funções (pula a própria dimensão).
   function renderAbsenteismoFuncao(rows) {
     lastFuncaoData = rows || [];
     var container = document.getElementById('chart-funcao');
@@ -1376,6 +1620,7 @@
     }
 
     var displayRows = funcaoExpanded ? rows : rows.slice(0, 10);
+    var selFuncao = globalFilter.funcao;
 
     updateChart('chart-funcao', 'canvas-funcao', {
       type: 'bar',
@@ -1384,7 +1629,14 @@
         datasets: [{
           label: '% Absenteísmo',
           data: displayRows.map(function (d) { return d.value; }),
-          backgroundColor: CORES.vermelho,
+          backgroundColor: displayRows.map(function (d) {
+            if (selFuncao) return d.label === selFuncao ? CORES.vinho : '#fca5a5';
+            return CORES.vermelho;
+          }),
+          hoverBackgroundColor: displayRows.map(function (d) {
+            if (selFuncao) return d.label === selFuncao ? CORES.vinho : '#f87171';
+            return '#dc2626';
+          }),
           borderRadius: 4
         }]
       },
@@ -1392,6 +1644,16 @@
         indexAxis: 'y',
         responsive: true,
         maintainAspectRatio: false,
+        onHover: function (e, elements) {
+          if (e.native && e.native.target) {
+            e.native.target.style.cursor = (elements && elements.length) ? 'pointer' : 'default';
+          }
+        },
+        onClick: function (e, elements) {
+          if (!elements || !elements.length) return;
+          var alvo = displayRows[elements[0].index];
+          if (alvo && alvo.label) toggleCrossFilter('funcao', alvo.label);
+        },
         plugins: {
           legend: { display: false },
           datalabels: { display: false },

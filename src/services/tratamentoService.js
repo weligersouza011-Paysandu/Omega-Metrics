@@ -1037,21 +1037,106 @@ function filtrarAtivos(pontoData) {
   });
 }
 
-function buildGraficos(pontoData, desligamentoData, absenteismo, turnover) {
-  const absenteismoPorStatus = absenteismo.detalhamento.map(d => ({
+/* ============================================================
+   FILTROS CRUZADOS (cross-filter global do dashboard)
+   Cada componente recebe as linhas filtradas por TODOS os filtros
+   ativos EXCETO a própria dimensão (`skip`), para que ele mantenha
+   as opções visíveis/clicáveis (alternar ou limpar a seleção).
+   ============================================================ */
+
+function normTxt(v) {
+  return String(v == null ? '' : v).trim().replace(/\s+/g, ' ').toUpperCase();
+}
+
+function diaIso(v) {
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  return String(v == null ? '' : v).slice(0, 10);
+}
+
+function temFiltro(f) {
+  if (!f) return false;
+  return ['status', 'dia', 'mes', 'colaborador', 'funcao']
+    .some(k => f[k] != null && String(f[k]).trim() !== '');
+}
+
+// Linhas de ponto: aplica os filtros globais pulando a dimensão `skip`.
+function applyCrossFilters(rows, f, skip) {
+  if (!rows || !temFiltro(f)) return rows;
+  const status = f.status != null && String(f.status).trim() ? String(f.status).trim() : null;
+  const dia = f.dia != null && String(f.dia).trim() ? String(f.dia).trim() : null;
+  const mes = f.mes != null && String(f.mes).trim() ? String(f.mes).trim() : null;
+  const colaborador = f.colaborador != null && String(f.colaborador).trim() ? f.colaborador : null;
+  const funcao = f.funcao != null && String(f.funcao).trim() ? f.funcao : null;
+
+  return rows.filter(row => {
+    if (skip !== 'status' && status) {
+      if (getStatusMeta(row && row.status).label !== status) return false;
+    }
+    if (skip !== 'dia' && dia) {
+      if (diaIso(row && row.dia) !== dia) return false;
+    }
+    if (skip !== 'mes' && mes) {
+      if (diaIso(row && row.dia).slice(0, 7) !== mes) return false;
+    }
+    if (skip !== 'colaborador' && colaborador) {
+      if (normTxt(row && row.nomeFuncionario) !== normTxt(colaborador)) return false;
+    }
+    if (skip !== 'funcao' && funcao) {
+      const cargo = (row && (row.nomeCargo || row.nomeFuncao)) || '';
+      if (normTxt(cargo) !== normTxt(funcao)) return false;
+    }
+    return true;
+  });
+}
+
+// Linhas de desligamento: aceita o shape toDesligDataShape (dataDesligamento/
+// nome/funcao) ou o registro bruto do banco (data_desligamento/nome_funcionario/
+// cargo). `status` (justificativa de ponto) não tem correspondência em motivo
+// de desligamento — é ignorado.
+function applyCrossFiltersDeslig(rows, f, skip) {
+  if (!rows || !temFiltro(f)) return rows;
+  const dia = f.dia != null && String(f.dia).trim() ? String(f.dia).trim() : null;
+  const mes = f.mes != null && String(f.mes).trim() ? String(f.mes).trim() : null;
+  const colaborador = f.colaborador != null && String(f.colaborador).trim() ? f.colaborador : null;
+  const funcao = f.funcao != null && String(f.funcao).trim() ? f.funcao : null;
+
+  return rows.filter(row => {
+    const dataDeslig = (row && (row.dataDesligamento || row.data_desligamento)) || '';
+    const nome = (row && (row.nome || row.nome_funcionario)) || '';
+    const cargo = (row && (row.funcao || row.cargo)) || '';
+    if (skip !== 'dia' && dia) {
+      if (diaIso(dataDeslig) !== dia) return false;
+    }
+    if (skip !== 'mes' && mes) {
+      if (diaIso(dataDeslig).slice(0, 7) !== mes) return false;
+    }
+    if (skip !== 'colaborador' && colaborador) {
+      if (normTxt(nome) !== normTxt(colaborador)) return false;
+    }
+    if (skip !== 'funcao' && funcao) {
+      if (normTxt(cargo) !== normTxt(funcao)) return false;
+    }
+    return true;
+  });
+}
+
+function buildGraficos(pontoData, desligamentoData, absenteismoDonut, turnover, cross) {
+  const absenteismoPorStatus = absenteismoDonut.detalhamento.map(d => ({
     label: d.status,
     value: d.quantidade
   }));
 
-  const absenteismoPorMes = calcAbsenteismoPorMes(pontoData);
+  const absenteismoPorMes = calcAbsenteismoPorMes(applyCrossFilters(pontoData, cross, 'mes'));
 
   // Ranking e por-função consideram apenas o contingente atual mobilizado
-  const ativos = filtrarAtivos(pontoData);
+  const ativos = filtrarAtivos(applyCrossFilters(pontoData, cross, 'funcao'));
   const absenteismoPorFuncao = calcAbsenteismoPorFuncao(ativos);
 
-  const absenteismoPorDia = calcAbsenteismoPorDia(pontoData);
+  const absenteismoPorDia = calcAbsenteismoPorDia(applyCrossFilters(pontoData, cross, 'dia'));
 
-  const absenteismoPorFuncionario = calcAbsenteismoPorFuncionario(ativos);
+  const absenteismoPorFuncionario = calcAbsenteismoPorFuncionario(
+    filtrarAtivos(applyCrossFilters(pontoData, cross, 'colaborador'))
+  );
 
   const turnoverPorMotivo = turnover.detalhamentoMotivos.map(d => ({
     label: d.motivo,
@@ -1060,7 +1145,7 @@ function buildGraficos(pontoData, desligamentoData, absenteismo, turnover) {
 
   const deptoFaltas = {};
   const deptoTotal = {};
-  for (const row of pontoData) {
+  for (const row of applyCrossFilters(pontoData, cross)) {
     const depto = row.nomeDepartamento || 'Sem Departamento';
     const meta = getStatusMeta(row.status);
     if (meta.geraAbsenteismo || meta.contaComoPresenca || meta.grupo === 'DESCONHECIDO') {
@@ -1110,14 +1195,25 @@ function buildGraficos(pontoData, desligamentoData, absenteismo, turnover) {
   };
 }
 
-function calculateMetrics(pontoData, desligamentoData, efetivoTotalOverride) {
-  const efetivoTotal = efetivoTotalOverride !== undefined ? efetivoTotalOverride : getEfetivoTotal(pontoData);
+function calculateMetrics(pontoData, desligamentoData, efetivoTotalOverride, crossFilters) {
+  const cross = crossFilters || null;
 
-  const absenteismo = calcAbsenteismo(pontoData);
-  const aderencia = calcAderencia(pontoData);
+  // KPIs (velocímetro, aderência) e efetivo: todos os filtros ativos
+  const rowsKpi = applyCrossFilters(pontoData, cross);
+  const efetivoTotal = efetivoTotalOverride !== undefined ? efetivoTotalOverride : getEfetivoTotal(rowsKpi);
+
+  const absenteismo = calcAbsenteismo(rowsKpi);
+  const aderencia = calcAderencia(rowsKpi);
+
+  // Rosca de justificativas mantém todas as fatias (pula o próprio status)
+  const absenteismoDonut = temFiltro(cross)
+    ? calcAbsenteismo(applyCrossFilters(pontoData, cross, 'status'))
+    : absenteismo;
+
+  // `desligamentoData` já chega cruzada (sem status) quando há filtro ativo
   const turnover = calcTurnover(desligamentoData, efetivoTotal);
 
-  const graficos = buildGraficos(pontoData, desligamentoData, absenteismo, turnover);
+  const graficos = buildGraficos(pontoData, desligamentoData, absenteismoDonut, turnover, cross);
 
   const kpis = {
     absenteismo,
@@ -1149,6 +1245,10 @@ module.exports = {
   classificarRegistros,
   calcularAbsenteismo,
   filtrarAtivos,
+  applyCrossFilters,
+  applyCrossFiltersDeslig,
+  temFiltro,
+  normTxt,
   calcEfetivoAtivoPorMes,
   calcTurnoverMensal,
   calcTurnoverPorFuncao,

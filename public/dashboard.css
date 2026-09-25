@@ -145,3 +145,40 @@
   box-shadow: inset 0 0 0 2px rgba(127, 29, 29, 0.35);
   border-radius: var(--radius-sm, 8px);
 }
+
+/* ---------- 5. CROSS-FILTER (interação dos 3 gráficos inferiores) ---------- */
+
+/* Ranking: linhas clicáveis (clique filtra o dashboard pelo colaborador,
+   clique de novo limpa a seleção) */
+.ranking-item {
+  cursor: pointer;
+  transition: background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.ranking-item:hover {
+  background: #fff1f2;
+  box-shadow: inset 0 0 0 1px #fecdd3;
+}
+
+/* Colaborador selecionado no filtro global */
+.ranking-item--selected {
+  background: rgba(127, 29, 29, 0.1);
+  box-shadow: inset 3px 0 0 var(--rhub-vinho, #7f1d1d);
+}
+
+.ranking-item--selected .ranking-item__name,
+.ranking-item--selected .ranking-item__val {
+  color: var(--rhub-vinho, #7f1d1d);
+}
+
+/* Gráficos de coluna (Mês e Função): colunas clicáveis */
+#chart-mes canvas,
+#chart-funcao canvas {
+  cursor: pointer;
+}
+
+/* Chip combinado dos filtros cruzados (colaborador / função / mês) */
+.day-chip--cross {
+  background: #ede9fe;
+  color: #5b21b6;
+}
