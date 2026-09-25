@@ -288,7 +288,24 @@
 
   <div class="toast-container" id="toast-container"></div>
 
+  <!-- MODAL: Carregamento & Sucesso (identidade Ômega) -->
+  <div class="omega-loader-overlay" id="omega-loader-modal" role="dialog" aria-modal="true" aria-live="polite" hidden>
+    <div class="omega-loader-card">
+      <div class="omega-loader-symbol" aria-hidden="true">Ω</div>
+      <p class="omega-loader-status" id="omega-status-text">Processando e enviando para a IA...</p>
+      <div class="omega-progress-track" id="omega-progress-track">
+        <div class="omega-progress-bar" id="omega-progress-bar"></div>
+      </div>
+      <p class="omega-progress-pct" id="omega-progress-pct">0%</p>
+      <div class="omega-success-state" id="omega-success-state" hidden>
+        <div class="omega-success-check"><i class="bi bi-check-lg"></i></div>
+        <p class="omega-success-text">Enviado com Sucesso!</p>
+      </div>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/apexcharts@3.44.2/dist/apexcharts.min.js"></script>
+  <script src="js/omega-loader.js"></script>
   <script src="js/tratamento.js"></script>
 </body>
 </html>

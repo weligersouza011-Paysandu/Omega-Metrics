@@ -287,6 +287,24 @@
     return '00:00';
   }
 
+  // Progresso simulado do modal Ômega enquanto a requisição está em voo
+  // (fetch não expõe upload progress): 35% → 65% → 85%.
+  function iniciarProgressoOmega() {
+    var etapas = [
+      { pct: 35, ms: 700, txt: 'Enviando registros para a IA...' },
+      { pct: 65, ms: 1700, txt: 'IA processando validações e regras de negócio...' },
+      { pct: 85, ms: 3000, txt: 'Gravando dados no PostgreSQL Neon...' }
+    ];
+    var timers = etapas.map(function (e) {
+      return setTimeout(function () {
+        window.setOmegaProgress(e.pct, e.txt);
+      }, e.ms);
+    });
+    return function pararProgressoOmega() {
+      timers.forEach(function (t) { clearTimeout(t); });
+    };
+  }
+
   function handleSubmit(e) {
     e.preventDefault();
 
@@ -301,6 +319,9 @@
 
     var formData = new FormData();
     formData.append('file_ponto', filePonto);
+
+    window.setOmegaProgress(10, 'Lendo e validando arquivo...');
+    var pararProgresso = iniciarProgressoOmega();
 
     fetch(API_URL + '/api/tratamento/processar-arquivo', {
       method: 'POST',
@@ -337,8 +358,15 @@
         btnLimpar.disabled = false;
         previewSection.style.display = 'block';
         previewSection.classList.add('fade-in');
+        pararProgresso();
+        window.setOmegaProgress(100, 'Finalizando...');
+        // Sem reload: a pré-visualização vive só em memória — recarregar
+        // perderia o lote recém-processado.
+        window.showOmegaSuccess('Arquivo Processado com Sucesso!');
       })
       .catch(function (err) {
+        pararProgresso();
+        window.closeOmegaLoader();
         showError(err.message || 'Erro ao comunicar com o servidor.');
         setLoading(false);
       });
@@ -964,6 +992,9 @@
     var prevText = text.textContent;
     text.textContent = 'Enviando...';
 
+    window.setOmegaProgress(10, 'Lendo e validando arquivo...');
+    var pararProgresso = iniciarProgressoOmega();
+
     fetch(API_URL + '/api/tratamento/confirmar-e-salvar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -986,8 +1017,15 @@
           console.warn('Erro ao salvar dados confirmados no LocalStorage:', e);
         }
         showSuccess(data.resumo);
+        pararProgresso();
+        window.setOmegaProgress(100, 'Finalizando...');
+        window.showOmegaSuccess('Enviado com Sucesso para o BI!', function () {
+          window.location.reload();
+        });
       })
       .catch(function (err) {
+        pararProgresso();
+        window.closeOmegaLoader();
         alert('Erro ao enviar para o BI: ' + err.message);
         if (spinner) spinner.style.display = 'none';
         text.textContent = prevText;
