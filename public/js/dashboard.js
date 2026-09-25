@@ -1,6 +1,15 @@
 (function () {
   'use strict';
 
+  // Registra o plugin DataLabels globalmente. A build UMD carregada via
+  // <script> NÃO se auto-registra — sem este passo, as opções de datalabels
+  // dos gráficos do Mês e da Função são ignoradas e os rótulos nunca aparecem.
+  try {
+    if (typeof Chart !== 'undefined' && typeof ChartDataLabels !== 'undefined') {
+      Chart.register(ChartDataLabels);
+    }
+  } catch (e) { /* ignore */ }
+
   // Base dinâmica da API: local vazio; hospedado (Render/GH Pages) aponta ao backend
   var API_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
     ? ''
@@ -51,7 +60,7 @@
   // própria (regra de escopo) — assim ele mantém as opções visíveis para
   // alternar/limpar o clique. Mesma regra em applyCrossFilters (servidor)
   // e matchFiltroLocal (fallback LocalStorage).
-  var globalFilter = { dia: null, mes: null, colaborador: null, funcao: null, justificativa: null };
+  var globalFilter = { dia: null, mes: null, colaborador: null, funcao: null, justificativa: null, motivo: null };
   var suppressSliderChange = false;
   var inflightCtrl = null;
 
@@ -83,8 +92,8 @@
     if (initialized) return;
     initialized = true;
 
-    // Datalabels: desligado por padrão — só a Rosca de Justificativas
-    // liga em suas opções (protege contra auto-registro do plugin).
+    // Datalabels: plugin registrado globalmente no topo do arquivo; o padrão
+    // fica desligado e cada gráfico liga o seu (Rosca, Mês e Função).
     try {
       if (typeof Chart !== 'undefined' && typeof ChartDataLabels !== 'undefined' && Chart.defaults) {
         Chart.defaults.set('datalabels', { display: false });
@@ -228,8 +237,9 @@
     if (globalFilter.dia) q += '&dia=' + encodeURIComponent(globalFilter.dia);
     if (globalFilter.mes) q += '&mes=' + encodeURIComponent(globalFilter.mes);
     if (globalFilter.colaborador) q += '&colaborador=' + encodeURIComponent(globalFilter.colaborador);
-    if (globalFilter.funcao) q += '&funcao=' + encodeURIComponent(globalFilter.funcao);
-    return q;
+      if (globalFilter.funcao) q += '&funcao=' + encodeURIComponent(globalFilter.funcao);
+      if (globalFilter.motivo) q += '&motivo=' + encodeURIComponent(globalFilter.motivo);
+      return q;
   }
 
   // Algum filtro que encolhe a resposta do calendário? (o filtro de dia é
@@ -247,11 +257,12 @@
     fetchDashboardData({ background: true, filterChange: true });
   }
 
-  function clearCrossFilters() {
-    globalFilter.colaborador = null;
-    globalFilter.funcao = null;
-    globalFilter.mes = null;
-    syncFilterChips();
+      function clearCrossFilters() {
+        globalFilter.colaborador = null;
+        globalFilter.funcao = null;
+        globalFilter.mes = null;
+        globalFilter.motivo = null;
+        syncFilterChips();
     fetchDashboardData({ background: true, filterChange: true });
   }
 
@@ -273,6 +284,7 @@
     if (globalFilter.colaborador) partes.push('Colaborador: ' + globalFilter.colaborador);
     if (globalFilter.funcao) partes.push('Função: ' + globalFilter.funcao);
     if (globalFilter.mes) partes.push('Mês: ' + fmtMesLabel(globalFilter.mes));
+    if (globalFilter.motivo) partes.push('Motivo: ' + globalFilter.motivo);
     if (partes.length) {
       chip.style.display = 'inline-flex';
       var txt = document.getElementById('cross-filter-chip-text');
@@ -526,7 +538,10 @@
     var mesMap = {};
     var funcaoMap = {};
     var funcsUnicos = new Set();
+    var funcsSeries = new Set();
     var desligamentos = [];
+    var desligamentosSemMes = [];
+    var desligamentosSemMotivo = [];
 
     function nomeDe(r) { return r.funcionario || r.nome || r.nomeFuncionario || 'Não Identificado'; }
     function cargoDe(r) { return r.funcao || r.cargo || r.nomeCargo || 'Não Definido'; }
@@ -546,6 +561,13 @@
     records.forEach(function (r) {
       var nome = nomeDe(r);
       if (matchFiltroLocal(r, 'justificativa', nome, cargoDe(r))) funcsUnicos.add(nome);
+    });
+
+    // Efetivo da série do Headcount — pula também o mês (regra de escopo:
+    // todos os meses seguem visíveis para o clique no gráfico)
+    records.forEach(function (r) {
+      var nome = nomeDe(r);
+      if (matchFiltroLocal(r, 'mes', nome, cargoDe(r))) funcsSeries.add(nome);
     });
 
     // Justificativas (rosca) — pula o próprio status
@@ -630,16 +652,23 @@
       var d = r.dia;
       var f = globalFilter;
       if (f.dia && d !== f.dia) return;
-      if (f.mes && String(d || '').substring(0, 7) !== f.mes) return;
       if (f.colaborador && normLocal(nome) !== normLocal(f.colaborador)) return;
       if (f.funcao && normLocal(cargo) !== normLocal(f.funcao)) return;
-      desligamentos.push({
+      var itemDeslig = {
         nome: nome,
         funcao: cargo,
         data: d,
         motivo: r.cid || st,
         classificacao: 'Operacional'
-      });
+      };
+      var noMes = !f.mes || String(d || '').substring(0, 7) === f.mes;
+      var noMotivo = !f.motivo || normLocal(itemDeslig.motivo) === normLocal(f.motivo);
+      // série do Headcount: pula o filtro `mes` (regra de escopo)
+      if (noMotivo) desligamentosSemMes.push(itemDeslig);
+      // rosca de justificativas: pula o filtro `motivo` (regra de escopo)
+      if (noMes) desligamentosSemMotivo.push(itemDeslig);
+      // detalhe/KPIs: todos os filtros
+      if (noMes && noMotivo) desligamentos.push(itemDeslig);
     });
 
     var totalPrevistos = totalFaltas + totalPresencas;
@@ -673,8 +702,23 @@
       return item;
     }).sort(function (a, b) { return b.value - a.value; });
 
+    // Justificativas de demissão: agrupadas por motivo real (pula o filtro
+    // `motivo` — regra de escopo — para todas as fatias seguirem clicáveis)
+    var motivoContagem = {};
+    desligamentosSemMotivo.forEach(function (dd) {
+      var m = dd.motivo || 'NÃO INFORMADO';
+      motivoContagem[m] = (motivoContagem[m] || 0) + 1;
+    });
+    var justificativasArr = Object.keys(motivoContagem).map(function (k) {
+      return { label: k, value: motivoContagem[k] };
+    }).sort(function (a, b) {
+      return b.value - a.value || a.label.localeCompare(b.label);
+    });
+
     var efetivo = funcsUnicos.size || 1;
     var turnGeralPct = (desligamentos.length / efetivo) * 100;
+    var efetivoSeries = funcsSeries.size || 1;
+    var turnHeadPct = (desligamentosSemMes.length / efetivoSeries) * 100;
 
     var dataCalculada = {
       success: true,
@@ -696,13 +740,27 @@
         absenteismoPorMes: mesArr,
         absenteismoPorFuncao: funcaoArr,
         desligamentosDetalhe: desligamentos,
+        justificativas: justificativasArr,
         turnoverMensal: mesArr.map(function (m) {
           return {
             label: m.label,
+            chave: m.chave,
             efetivoAtivo: efetivo,
             desligadosGeral: desligamentos.length,
             operacional: Number(turnGeralPct.toFixed(2)),
             operacionais: desligamentos.length,
+            reducao: 0
+          };
+        }),
+        // Série do gráfico Headcount: pula o filtro `mes` (todos os meses)
+        turnoverHeadcount: mesArr.map(function (m) {
+          return {
+            label: m.label,
+            chave: m.chave,
+            efetivoAtivo: efetivoSeries,
+            desligadosGeral: desligamentosSemMes.length,
+            operacional: Number(turnHeadPct.toFixed(2)),
+            operacionais: desligamentosSemMes.length,
             reducao: 0
           };
         })
@@ -868,9 +926,9 @@
     cacheDesligamentos = g.desligamentosDetalhe || [];
     renderTurnoverKpis(k.turnover || {}, data.efetivoTotal || 0);
 
-    renderHeadcountMovimentacao(g.turnoverMensal || [], data.efetivoTotal || 0);
+    renderHeadcountMovimentacao(g.turnoverHeadcount || g.turnoverMensal || []);
     renderTurnoverOperacional(g.turnoverMensal || [], k.turnover || {});
-    renderRazaoReposicao(g.turnoverMensal || []);
+    renderJustificativasDemissao(g.justificativas || []);
     renderComposicaoDesligamentos(g.turnoverMensal || []);
 
     // Chips acompanham o estado (inclusive no fallback LocalStorage)
@@ -1055,8 +1113,9 @@
     var total = rows.reduce(function (s, d) { return s + (Number(d.value) || 0); }, 0);
     var justSel = globalFilter.justificativa;
 
+    // ChartDataLabels já vem registrado globalmente no topo do arquivo;
+    // repeti-lo aqui duplicaria as execuções dos hooks do plugin.
     var plugins = [donutCenterPlugin];
-    if (typeof ChartDataLabels !== 'undefined') plugins.push(ChartDataLabels);
 
     var config = {
       type: 'doughnut',
@@ -1577,10 +1636,13 @@
             display: true,
             anchor: 'end',
             align: 'top',
-            offset: 2,
-            color: '#334155',
-            font: { family: 'Inter', weight: '700', size: 10 },
-            formatter: function (v) { return pctBr(v); }
+            offset: 4,
+            clip: false,
+            color: '#1e293b',
+            font: { family: 'Inter', weight: '700', size: 12 },
+            formatter: function (v) {
+              return (Number(v) || 0).toFixed(2).replace('.', ',') + '%';
+            }
           },
           tooltip: {
             callbacks: {
@@ -1597,7 +1659,8 @@
           y: {
             display: false,
             beginAtZero: true,
-            grace: '12%',
+            // folga superior: o rótulo acima da coluna nunca é cortado
+            grace: '15%',
             grid: { display: false },
             ticks: { display: false }
           }
@@ -1656,7 +1719,20 @@
         },
         plugins: {
           legend: { display: false },
-          datalabels: { display: false },
+          // Rótulo na ponta de cada barra horizontal, fora da barra (para a
+          // direita) e com folga na escala para não cortar a leitura
+          datalabels: {
+            display: true,
+            anchor: 'end',
+            align: 'right',
+            offset: 4,
+            clip: false,
+            color: '#1e293b',
+            font: { family: 'Inter', weight: '700', size: 11 },
+            formatter: function (v) {
+              return (Number(v) || 0).toFixed(1).replace('.', ',') + '%';
+            }
+          },
           tooltip: {
             callbacks: {
               label: function (c) { return ' % Absenteísmo: ' + pctBr(c.parsed.x); }
@@ -1666,6 +1742,9 @@
         scales: {
           x: {
             beginAtZero: true,
+            // folga à direita: a ponta da barra nunca encosta na borda,
+            // deixando espaço para o rótulo de valor
+            grace: '18%',
             ticks: { callback: function (v) { return v + '%'; } }
           }
         }
@@ -1723,8 +1802,13 @@
     }
   }
 
-  // GRÁFICO 1: HEADCOUNT & MOVIMENTAÇÃO
-  function renderHeadcountMovimentacao(turnoverMesRows, capacityTotal) {
+  // GRÁFICO 1: HEADCOUNT & MOVIMENTAÇÃO (eixo duplo)
+  // Colunas de efetivo no eixo esquerdo (Y1) + linhas de admissões/demissões
+  // no eixo direito (Y2).
+  // Clique numa coluna aplica/limpa o filtro global de mês; com mês ativo as
+  // demais colunas ficam em alpha ~35% (a série pula o filtro `mes` no
+  // servidor — regra de escopo — então todos os meses seguem visíveis).
+  function renderHeadcountMovimentacao(turnoverMesRows) {
     var container = document.getElementById('chart-headcount-movimentacao');
     if (!container) return;
     if (!turnoverMesRows || !turnoverMesRows.length) {
@@ -1733,19 +1817,63 @@
       return;
     }
 
-    var labels = turnoverMesRows.map(function (d) { return d.label; });
-    var demitidos = turnoverMesRows.map(function (d) { return d.desligadosGeral; });
+    var rows = turnoverMesRows;
+    var labels = rows.map(function (d) { return d.label; });
+    var efetivo = rows.map(function (d) { return Number(d.efetivoAtivo) || 0; });
+    var demitidos = rows.map(function (d) { return Number(d.desligadosGeral) || 0; });
+
+    function chaveDe(d) {
+      if (d && d.chave) return d.chave;
+      var lb = d && String(d.label || '');
+      return /^\d{4}-\d{2}$/.test(lb) ? lb : null;
+    }
+
+    // Destaque do mês filtrado: selecionado em tom sólido, demais com
+    // alpha de ~35% ('#94a3b859')
+    var selMes = globalFilter.mes;
+    function corColuna(d) {
+      var ativo = !selMes || chaveDe(d) === selMes;
+      return ativo ? '#94a3b8' : '#94a3b859';
+    }
+    function corColunaHover(d) {
+      var ativo = !selMes || chaveDe(d) === selMes;
+      return ativo ? '#64748b' : '#94a3b859';
+    }
 
     var admitidos = [];
-    for (var i = 0; i < turnoverMesRows.length; i++) {
-      var efAtual = turnoverMesRows[i].efetivoAtivo || 0;
-      var efAnterior = i > 0 ? (turnoverMesRows[i - 1].efetivoAtivo || efAtual) : efAtual;
+    for (var i = 0; i < rows.length; i++) {
+      var efAtual = efetivo[i];
+      var efAnterior = i > 0 ? (efetivo[i - 1] || efAtual) : efAtual;
       var delta = efAtual - efAnterior;
       var adm = Math.max(0, delta + demitidos[i]);
       admitidos.push(adm);
     }
 
-    var capacityLine = labels.map(function () { return capacityTotal || 0; });
+    // Y1 (esquerdo): só as matrículas — faixa folgada em passos de 50,
+    // calculada apenas sobre o efetivo (ex.: 400..412 → eixo 350..450)
+    var minY1 = Math.min.apply(null, efetivo);
+    var maxY1 = Math.max.apply(null, efetivo);
+    var y1Min = Math.max(0, Math.floor((minY1 * 0.9) / 50) * 50);
+    var y1Max = Math.max(y1Min + 50, Math.ceil((maxY1 * 1.05) / 50) * 50);
+
+    // Y2 (direito): só movimentações — do zero ao pico com folga (ex.: 30 → 40)
+    var picoMov = Math.max(1, Math.max.apply(null, admitidos.concat(demitidos)));
+    var y2Max = Math.max(5, Math.ceil((picoMov * 1.25) / 5) * 5);
+
+    function rotuloMov(cor) {
+      return {
+        display: true,
+        anchor: 'end',
+        align: 'top',
+        offset: 4,
+        clip: false,
+        // mantém o texto dentro da área do gráfico (não invade o eixo X)
+        clamp: true,
+        color: cor,
+        font: { family: 'Inter', weight: '700', size: 10 },
+        formatter: function (v) { return String(Math.round(Number(v) || 0)); }
+      };
+    }
 
     updateChart('chart-headcount-movimentacao', 'canvas-headcount-movimentacao', {
       type: 'bar',
@@ -1754,40 +1882,116 @@
         datasets: [
           {
             type: 'bar',
-            label: 'Admitidos',
-            data: admitidos,
-            backgroundColor: CORES.verde,
-            borderRadius: 4
-          },
-          {
-            type: 'bar',
-            label: 'Demitidos Total',
-            data: demitidos,
-            backgroundColor: CORES.vermelho,
-            borderRadius: 4
+            label: 'Efetivo Total (Matrículas Ativas)',
+            data: efetivo,
+            backgroundColor: rows.map(corColuna),
+            hoverBackgroundColor: rows.map(corColunaHover),
+            borderRadius: 4,
+            yAxisID: 'y1',
+            order: 2
           },
           {
             type: 'line',
-            label: 'Efetivo Máximo (Capacity)',
-            data: capacityLine,
-            borderColor: CORES.azul,
+            label: 'Admitidos',
+            data: admitidos,
+            borderColor: CORES.verde,
+            backgroundColor: CORES.verde,
             borderWidth: 2,
-            borderDash: [5, 5],
-            pointRadius: 3,
-            fill: false
+            tension: 0.3,
+            pointRadius: 4,
+            pointHoverRadius: 6,
+            pointBackgroundColor: CORES.verde,
+            fill: false,
+            yAxisID: 'y2',
+            order: 1,
+            datalabels: rotuloMov(CORES.verde)
+          },
+          {
+            type: 'line',
+            label: 'Demitidos Total',
+            data: demitidos,
+            borderColor: CORES.vermelho,
+            backgroundColor: CORES.vermelho,
+            borderWidth: 2,
+            tension: 0.3,
+            pointRadius: 4,
+            pointHoverRadius: 6,
+            pointBackgroundColor: CORES.vermelho,
+            fill: false,
+            yAxisID: 'y2',
+            order: 1,
+            datalabels: Object.assign(rotuloMov(CORES.vermelho), { align: 'bottom' })
           }
         ]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
+        // Clique em coluna ou ponto → filtro global de mês (2º clique limpa)
+        onClick: function (e, elements) {
+          if (!elements || !elements.length) return;
+          var d = rows[elements[0].index];
+          var chave = d && chaveDe(d);
+          if (chave) toggleCrossFilter('mes', chave);
+        },
+        // Cursor de mão sobre qualquer barra ou ponto
+        onHover: function (e, elements, chart) {
+          var alvo = (e && e.chart && e.chart.canvas) ||
+            (chart && chart.canvas) ||
+            (e && e.native && e.native.target);
+          if (alvo) alvo.style.cursor = elements && elements.length ? 'pointer' : 'default';
+        },
         plugins: {
           legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } },
           datalabels: { display: false },
-          tooltip: { mode: 'index', intersect: false }
+          tooltip: {
+            mode: 'index',
+            intersect: false,
+            callbacks: {
+              label: function (ctx) {
+                var v = ctx.parsed.y;
+                var lbl = ctx.dataset.label;
+                if (lbl === 'Efetivo Total (Matrículas Ativas)') {
+                  return ' Total de Matrículas Ativas: ' + v;
+                }
+                if (lbl === 'Admitidos') return ' Admissões: ' + v;
+                if (lbl === 'Demitidos Total') return ' Demissões: ' + v;
+                return ' ' + lbl + ': ' + v;
+              },
+              footer: function (items) {
+                if (!items.length) return '';
+                var admit = null;
+                var demit = null;
+                items.forEach(function (it) {
+                  if (it.dataset.label === 'Admitidos') admit = it.parsed.y;
+                  if (it.dataset.label === 'Demitidos Total') demit = it.parsed.y;
+                });
+                if (admit === null || demit === null) return '';
+                var saldo = admit - demit;
+                return ' Saldo Líquido do Mês (Admitidos - Demitidos): ' +
+                  (saldo > 0 ? '+' : '') + saldo;
+              }
+            }
+          }
         },
         scales: {
-          y: { beginAtZero: true, ticks: { precision: 0 } }
+          // Y1 esquerdo: total de matrículas
+          y1: {
+            position: 'left',
+            min: y1Min,
+            max: y1Max,
+            ticks: { precision: 0 },
+            grid: { color: 'rgba(148, 163, 184, 0.2)' }
+          },
+          // Y2 direito: exclusivo de admissões/demissões, sem grid
+          y2: {
+            position: 'right',
+            min: 0,
+            max: y2Max,
+            grid: { display: false },
+            ticks: { precision: 0 }
+          },
+          x: { grid: { display: false } }
         }
       }
     });
@@ -1821,7 +2025,20 @@
             fill: true,
             tension: 0.3,
             pointRadius: 4,
-            pointBackgroundColor: CORES.vinho
+            pointBackgroundColor: CORES.vinho,
+            // Rótulo percentual exato acima de cada ponto vermelho
+            datalabels: {
+              display: true,
+              anchor: 'end',
+              align: 'top',
+              offset: 6,
+              clip: false,
+              color: '#7f1d1d',
+              font: { family: 'Inter', weight: '700', size: 11 },
+              formatter: function (v) {
+                return (Number(v) || 0).toFixed(2).replace('.', ',') + '%';
+              }
+            }
           },
           {
             label: 'Meta Operacional (3,00%)',
@@ -1851,6 +2068,8 @@
         scales: {
           y: {
             beginAtZero: true,
+            // folga superior: os rótulos no topo nunca são cortados
+            grace: '15%',
             ticks: { callback: function (v) { return v + '%'; } }
           }
         }
@@ -1858,56 +2077,95 @@
     });
   }
 
-  // GRÁFICO 3: RAZÃO DE REPOSIÇÃO (DONUT)
-  function renderRazaoReposicao(turnoverMesRows) {
+  // GRÁFICO 3: JUSTIFICATIVAS DE DEMISSÃO (donut por motivo real)
+  // Clique numa fatia aplica/limpa o cross-filter `motivo` (filtra a lista
+  // detalhada/digital do turnover e os KPIs de desligamento); com motivo
+  // ativo as demais fatias desbotam. O servidor agrupa pulando a própria
+  // dimensão (regra de escopo), então todas as justificativas seguem
+  // visíveis e clicáveis.
+  function renderJustificativasDemissao(rows) {
     var container = document.getElementById('chart-razao-reposicao');
     if (!container) return;
-    if (!turnoverMesRows || !turnoverMesRows.length) {
+    if (!rows || !rows.length) {
       destroyChart('chart-razao-reposicao');
       container.innerHTML = placeholderVazio();
       return;
     }
 
-    var totalDesligOperacionais = turnoverMesRows.reduce(function (s, r) { return s + (r.operacionais || 0); }, 0);
-
-    var totalAdmissoes = 0;
-    for (var i = 0; i < turnoverMesRows.length; i++) {
-      var efAtual = turnoverMesRows[i].efetivoAtivo || 0;
-      var efAnterior = i > 0 ? (turnoverMesRows[i - 1].efetivoAtivo || efAtual) : efAtual;
-      var delta = efAtual - efAnterior;
-      var adm = Math.max(0, delta + (turnoverMesRows[i].desligadosGeral || 0));
-      totalAdmissoes += adm;
-    }
-
-    var substituicao = Math.min(totalAdmissoes, totalDesligOperacionais);
-    var expansao = Math.max(0, totalAdmissoes - substituicao);
+    var paleta = [
+      '#7f1d1d', '#dc2626', '#f59e0b', '#10b981',
+      '#2563eb', '#8b5cf6', '#64748b', '#0ea5e9'
+    ];
+    var selMotivo = globalFilter.motivo;
 
     updateChart('chart-razao-reposicao', 'canvas-razao-reposicao', {
       type: 'doughnut',
       data: {
-        labels: ['% Substituição de Turnover', '% Expansão de Quadro'],
+        labels: rows.map(function (d) { return d.label; }),
         datasets: [{
-          data: [substituicao, expansao],
-          backgroundColor: [CORES.roxo, CORES.verde],
-          borderWidth: 2,
-          borderColor: '#ffffff'
+          data: rows.map(function (d) { return d.value; }),
+          backgroundColor: rows.map(function (d, i) {
+            var base = paleta[i % paleta.length];
+            if (selMotivo && d.label !== selMotivo) return base + '59';
+            return base;
+          }),
+          borderWidth: rows.map(function (d) {
+            return (selMotivo && d.label === selMotivo) ? 4 : 2;
+          }),
+          borderColor: rows.map(function (d) {
+            return (selMotivo && d.label === selMotivo) ? CORES.vinho : '#ffffff';
+          })
         }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         cutout: '60%',
+        onHover: function (e, elements, chart) {
+          var alvo = (e && e.chart && e.chart.canvas) ||
+            (chart && chart.canvas) ||
+            (e && e.native && e.native.target);
+          if (alvo) alvo.style.cursor = elements && elements.length ? 'pointer' : 'default';
+        },
+        onClick: function (e, elements) {
+          if (!elements || !elements.length) return;
+          var inst = chartInstances['chart-razao-reposicao'];
+          var label = inst && inst.data.labels ? inst.data.labels[elements[0].index] : null;
+          if (label) toggleCrossFilter('motivo', label);
+        },
         plugins: {
-          legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
-          datalabels: { display: false },
+          legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 }, padding: 8 } },
+          // quantidade + percentual dentro de cada fatia (ex.: '12 (40,0%)')
+          datalabels: {
+            display: function (ctx) {
+              var val = Number(ctx.dataset.data[ctx.dataIndex]) || 0;
+              return val > 0;
+            },
+            anchor: 'center',
+            align: 'center',
+            color: '#ffffff',
+            font: { family: 'Inter', weight: '700', size: 11 },
+            formatter: function (val, ctx) {
+              var total = ctx.dataset.data.reduce(function (a, b) {
+                return a + (Number(b) || 0);
+              }, 0);
+              if (!total) return '';
+              var pct = ((val / total) * 100).toFixed(1).replace('.', ',') + '%';
+              return val + ' (' + pct + ')';
+            }
+          },
           tooltip: {
             callbacks: {
               label: function (ctx) {
-                // Data-driven: soma a partir dos dados atuais do chart
-                var d = (ctx.chart.data.datasets[0] && ctx.chart.data.datasets[0].data) || [];
-                var total = (Number(d[0]) || 0) + (Number(d[1]) || 0);
-                var pct = total > 0 ? ((ctx.raw / total) * 100).toFixed(1) + '%' : '0%';
-                return ' ' + ctx.label + ': ' + ctx.raw + ' colab. (' + pct + ')';
+                var val = Number(ctx.parsed) || 0;
+                var data = ctx.dataset.data || [];
+                var total = data.reduce(function (a, b) {
+                  return a + (Number(b) || 0);
+                }, 0);
+                var pct = total
+                  ? ((val / total) * 100).toFixed(1).replace('.', ',') + '%'
+                  : '0%';
+                return ' ' + ctx.label + ': ' + val + ' colaboradores (' + pct + ')';
               }
             }
           }
@@ -1939,14 +2197,56 @@
             label: 'Turnover Operacional',
             data: operacionais,
             backgroundColor: CORES.vinho,
-            stack: 'desligamentos'
+            stack: 'desligamentos',
+            // valor dentro da fatia (apenas quando > 0)
+            datalabels: {
+              display: function (ctx) {
+                return (Number(ctx.dataset.data[ctx.dataIndex]) || 0) > 0;
+              },
+              anchor: 'center',
+              align: 'center',
+              color: '#ffffff',
+              font: { family: 'Inter', weight: '700', size: 11 },
+              formatter: function (v) { return String(Math.round(Number(v) || 0)); }
+            }
           },
           {
             label: 'Redução de Efetivo (Contratual)',
             data: reducao,
             backgroundColor: CORES.cinza,
             borderRadius: { topLeft: 4, topRight: 4 },
-            stack: 'desligamentos'
+            stack: 'desligamentos',
+            // último dataset da pilha: valor interno + total do mês acima
+            datalabels: {
+              labels: {
+                valor: {
+                  display: function (ctx) {
+                    return (Number(ctx.dataset.data[ctx.dataIndex]) || 0) > 0;
+                  },
+                  anchor: 'center',
+                  align: 'center',
+                  color: '#ffffff',
+                  font: { family: 'Inter', weight: '700', size: 11 },
+                  formatter: function (v) { return String(Math.round(Number(v) || 0)); }
+                },
+                total: {
+                  display: true,
+                  anchor: 'end',
+                  align: 'top',
+                  offset: 4,
+                  clip: false,
+                  color: '#1e293b',
+                  font: { family: 'Inter', weight: '700', size: 12 },
+                  formatter: function (v, ctx) {
+                    var index = ctx.dataIndex;
+                    var total = ctx.chart.data.datasets.reduce(function (acc, ds) {
+                      return acc + (Number(ds.data[index]) || 0);
+                    }, 0);
+                    return total > 0 ? String(Math.round(total)) : '';
+                  }
+                }
+              }
+            }
           }
         ]
       },
@@ -1969,7 +2269,13 @@
         },
         scales: {
           x: { stacked: true },
-          y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } }
+          y: {
+            stacked: true,
+            beginAtZero: true,
+            // folga superior: o total do mês acima da coluna não é cortado
+            grace: '15%',
+            ticks: { precision: 0 }
+          }
         }
       }
     });

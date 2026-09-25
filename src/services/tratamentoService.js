@@ -1055,7 +1055,7 @@ function diaIso(v) {
 
 function temFiltro(f) {
   if (!f) return false;
-  return ['status', 'dia', 'mes', 'colaborador', 'funcao']
+  return ['status', 'dia', 'mes', 'colaborador', 'funcao', 'motivo']
     .some(k => f[k] != null && String(f[k]).trim() !== '');
 }
 
@@ -1099,6 +1099,7 @@ function applyCrossFiltersDeslig(rows, f, skip) {
   const mes = f.mes != null && String(f.mes).trim() ? String(f.mes).trim() : null;
   const colaborador = f.colaborador != null && String(f.colaborador).trim() ? f.colaborador : null;
   const funcao = f.funcao != null && String(f.funcao).trim() ? f.funcao : null;
+  const motivo = f.motivo != null && String(f.motivo).trim() ? String(f.motivo).trim() : null;
 
   return rows.filter(row => {
     const dataDeslig = (row && (row.dataDesligamento || row.data_desligamento)) || '';
@@ -1115,6 +1116,12 @@ function applyCrossFiltersDeslig(rows, f, skip) {
     }
     if (skip !== 'funcao' && funcao) {
       if (normTxt(cargo) !== normTxt(funcao)) return false;
+    }
+    if (skip !== 'motivo' && motivo) {
+      // shape cru (justificativa_rh, pode ser código) ou já mapeado (motivo)
+      const bruto = (row && (row.motivo || row.justificativa_rh)) || '';
+      const valor = MOTIVO_TO_METRIC[bruto] || bruto;
+      if (normTxt(valor) !== normTxt(motivo)) return false;
     }
     return true;
   });

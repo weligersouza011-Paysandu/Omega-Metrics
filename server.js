@@ -282,7 +282,7 @@ app.get('/api/dashboard/datas-disponiveis', async (req, res) => {
 
 app.get('/api/dashboard/kpis', async (req, res) => {
   try {
-    const { dataInicio, dataFim, status, dia, mes, colaborador, funcao } = req.query;
+    const { dataInicio, dataFim, status, dia, mes, colaborador, funcao, motivo } = req.query;
 
     if (!dataInicio || !dataFim) {
       return res.status(400).json({ success: false, error: 'Parâmetros dataInicio e dataFim são obrigatórios.' });
@@ -294,7 +294,8 @@ app.get('/api/dashboard/kpis', async (req, res) => {
 
     // --- FILTROS GLOBAIS (cross-filter) ------------------------------------
     // `status` = justificativa (fatias da rosca); `dia`, `mes`, `colaborador`
-    // e `funcao` vêm dos cliques no calendário e nos 3 gráficos inferiores.
+    // e `funcao` vêm dos cliques no calendário e nos 3 gráficos inferiores;
+    // `motivo` = justificativa de demissão (fatias de Justificativas).
     const str = v => (typeof v === 'string' && v.trim() ? v.trim() : null);
     const diaStr = str(dia);
     const mesStr = str(mes);
@@ -303,7 +304,8 @@ app.get('/api/dashboard/kpis', async (req, res) => {
       dia: diaStr && /^\d{4}-\d{2}-\d{2}$/.test(diaStr) ? diaStr : null,
       mes: mesStr && /^\d{4}-\d{2}$/.test(mesStr) ? mesStr : null,
       colaborador: str(colaborador),
-      funcao: str(funcao)
+      funcao: str(funcao),
+      motivo: str(motivo)
     };
 
     const baseRows = toPontoDataShape(pontoRows);
@@ -312,6 +314,20 @@ app.get('/api/dashboard/kpis', async (req, res) => {
     // justificativa de ponto correspondente a motivo de desligamento)
     const desligRowsFiltradas = applyCrossFiltersDeslig(desligRows, cross);
     const desligData = toDesligDataShape(desligRowsFiltradas);
+
+    // Justificativas de demissão: agrupa pulando a própria dimensão `motivo`
+    // (regra de escopo) — todas as fatias continuam visíveis e clicáveis
+    const desligDataSemMotivo = toDesligDataShape(
+      applyCrossFiltersDeslig(desligRows, cross, 'motivo')
+    );
+    const contagemMotivos = {};
+    for (const d of desligDataSemMotivo) {
+      const m = (d.motivo && String(d.motivo).trim()) || 'NÃO INFORMADO';
+      contagemMotivos[m] = (contagemMotivos[m] || 0) + 1;
+    }
+    const justificativas = Object.keys(contagemMotivos)
+      .map(k => ({ label: k, value: contagemMotivos[k] }))
+      .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
 
     // Efetivo total: foto do filtro sem o `status` (a query por período nunca
     // foi afetada pelo filtro de status — comportamento histórico preservado)
@@ -331,6 +347,15 @@ app.get('/api/dashboard/kpis', async (req, res) => {
     const efetivoAtivo = calcEfetivoAtivoPorMes(pontoCross);
     const turnoverMensal = calcTurnoverMensal(desligData, efetivoAtivo.porMes);
     const turnoverPorFuncao = calcTurnoverPorFuncao(pontoCross, desligData);
+
+    // Série do gráfico Headcount & Movimentação: pula o próprio filtro
+    // `mes` (regra de escopo) — todos os meses seguem visíveis e clicáveis
+    // para alternar/limpar o filtro, enquanto dia/colaborador/função/
+    // justificativa continuam valendo
+    const pontoCrossSemMes = applyCrossFilters(baseRows, cross, 'mes');
+    const efetivoAtivoSemMes = calcEfetivoAtivoPorMes(pontoCrossSemMes);
+    const desligDataSemMes = toDesligDataShape(applyCrossFiltersDeslig(desligRows, cross, 'mes'));
+    const turnoverHeadcount = calcTurnoverMensal(desligDataSemMes, efetivoAtivoSemMes.porMes);
 
     // Contagens operacional/reducao: mesmo critério `conta_turnover` da
     // consulta do banco, porém sobre as linhas já cruzadas pelo filtro
@@ -359,6 +384,8 @@ app.get('/api/dashboard/kpis', async (req, res) => {
       efetivo: efetivoAtivo
     };
     graficos.turnoverMensal = turnoverMensal;
+    graficos.turnoverHeadcount = turnoverHeadcount;
+    graficos.justificativas = justificativas;
     graficos.turnoverPorFuncao = turnoverPorFuncao;
     graficos.desligamentosDetalhe = desligData
       .map(d => ({
