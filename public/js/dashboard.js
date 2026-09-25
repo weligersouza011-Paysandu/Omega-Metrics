@@ -53,6 +53,7 @@
   var lastRankingRows = [];
   var cacheDesligamentos = [];
   var localStorageRecords = null;
+  var gridRendered = false;
 
   // Elementos do DOM
   var loadingEl = document.getElementById('dashboard-loading');
@@ -139,16 +140,35 @@
     }
   }
 
+  // Compara estado serializável (data/options/meta) para pular repaints.
+  function jsonEqual(a, b) {
+    if (a === b) return true;
+    try {
+      return JSON.stringify(a) === JSON.stringify(b);
+    } catch (e) {
+      return false;
+    }
+  }
+
   // Atualização in-place: reutiliza a instância Chart.js existente (data +
   // options + update) em vez de destruir/recriar o canvas a cada render.
   // `meta` é um objeto livre lido pelos plugins custom via chart.$meta.
+  // Performance: nada mudou → sem repaint; mudou → update('none') sem animação.
   function updateChart(id, canvasId, config, meta) {
     var inst = chartInstances[id];
     if (inst && inst.canvas && inst.canvas.parentNode) {
-      inst.data = config.data;
-      inst.options = config.options;
+      var dataChanged = !jsonEqual(inst.data, config.data);
+      var optsChanged = !jsonEqual(inst.options, config.options);
+      var metaChanged = !jsonEqual(inst.$meta, meta);
+
       inst.$meta = meta;
-      inst.update();
+      if (dataChanged) inst.data = config.data;
+      if (optsChanged) inst.options = config.options;
+
+      // Sem dados novos e sem mudança de opções → nem repinta
+      if (dataChanged || optsChanged || metaChanged) {
+        inst.update('none');
+      }
       return inst;
     }
 
@@ -303,7 +323,10 @@
       return;
     }
 
-    var background = !!opts.background;
+    // Após o 1º render, toda busca roda em background: evita esconder o
+    // grid (display:none) e forçar o resize/redraw dos 9 canvas a cada
+    // clique de filtro ou ajuste de período.
+    var background = !!opts.background || gridRendered;
     if (background) {
       // Atualização leve: mantém o grid visível (sem spinner full-screen)
       if (gridEl) gridEl.classList.add('is-refreshing');
@@ -327,7 +350,10 @@
         if (inflightCtrl === ctrl) inflightCtrl = null;
         if (gridEl) gridEl.classList.remove('is-refreshing');
         if (!data.success || data.semDados) {
-          if (!background) tryLocalStorageFallback();
+          // Período vazio (ou erro): recai no LocalStorage / estado vazio.
+          // Clique de filtro mantém a visão anterior (evita "pisca").
+          var isFilterClick = !!(opts.dayFilterChange || opts.statusFilterChange);
+          if (!isFilterClick) tryLocalStorageFallback();
           return;
         }
         showGrid();
@@ -531,6 +557,7 @@
     if (loadingEl) loadingEl.style.display = 'none';
     if (emptyEl) emptyEl.style.display = 'none';
     if (gridEl) gridEl.style.display = 'flex';
+    gridRendered = true;
   }
 
   /* ============================================================
@@ -545,6 +572,21 @@
 
   function initFlatpickr() {
     if (typeof flatpickr === 'undefined') return;
+
+    // Guarda por input: reentradas (ex.: fallback LocalStorage) não podem
+    // criar uma 2ª instância com onChange duplicado (fetch em dobro).
+    if (rangeInicio && rangeInicio._flatpickr) {
+      try {
+        rangeInicio._flatpickr.set('minDate', periodoMin);
+        rangeInicio._flatpickr.set('maxDate', periodoMax);
+      } catch (e) { /* ignore */ }
+    }
+    if (rangeFim && rangeFim._flatpickr) {
+      try {
+        rangeFim._flatpickr.set('minDate', periodoMin);
+        rangeFim._flatpickr.set('maxDate', periodoMax);
+      } catch (e) { /* ignore */ }
+    }
 
     var config = {
       dateFormat: 'Y-m-d',
@@ -561,8 +603,12 @@
       }
     };
 
-    if (rangeInicio) flatpickr('#range-inicio', Object.assign({}, config, { defaultDate: periodoMin }));
-    if (rangeFim) flatpickr('#range-fim', Object.assign({}, config, { defaultDate: periodoMax }));
+    if (rangeInicio && !rangeInicio._flatpickr) {
+      flatpickr('#range-inicio', Object.assign({}, config, { defaultDate: periodoMin }));
+    }
+    if (rangeFim && !rangeFim._flatpickr) {
+      flatpickr('#range-fim', Object.assign({}, config, { defaultDate: periodoMax }));
+    }
   }
 
   function initSliderValues() {
@@ -607,7 +653,8 @@
 
   function triggerDataFetch() {
     clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(fetchDashboardData, 300);
+    // background: não esconde o grid nem recria os gráficos — só atualiza
+    debounceTimer = setTimeout(function () { fetchDashboardData({ background: true }); }, 300);
   }
 
   /* ============================================================
@@ -938,6 +985,14 @@
   }
 
   // CALENDÁRIO DE ABSENTEÍSMO (GRID 8 MESES COM ROLAGEM VERTICAL)
+  // Chave da página de meses atualmente no DOM — permite atualizar as
+  // células in-place sem reconstruir o HTML quando a página não muda.
+  var calPageKey = null;
+
+  function calPageKeyAtual(pageMonths) {
+    return (calState.anual ? 'A' : 'P') + '|' + calState.ano + '|' + calState.mes + '|' + pageMonths;
+  }
+
   function renderCalendario() {
     var container = document.getElementById('calendario');
     if (!container) return;
@@ -945,6 +1000,7 @@
     var datas = Array.from(datasDisponiveis).sort();
     if (!datas.length) {
       container.innerHTML = placeholderVazio();
+      calPageKey = null;
       return;
     }
 
@@ -955,17 +1011,63 @@
       calState.mes = minDate.getMonth();
     }
 
+    var pageMonths = calState.anual ? 12 : CAL_PAGE_MONTHS;
+    var key = calPageKeyAtual(pageMonths);
+
+    // Mesma página de meses no DOM → só atualiza classes/títulos/seleção
+    // das células existentes (sem innerHTML, sem recriar nós).
+    if (key === calPageKey && container.dataset.calKey === key &&
+        container.querySelector('.rhub-month')) {
+      refreshCalendarioCells(container);
+      return;
+    }
+
     var scrollTop = container.scrollTop;
 
     container.innerHTML = '';
-    var pageMonths = calState.anual ? 12 : CAL_PAGE_MONTHS;
-
     for (var i = 0; i < pageMonths; i++) {
       var d = new Date(calState.ano, calState.mes + i, 1);
       container.appendChild(buildMonthTable(d.getFullYear(), d.getMonth()));
     }
 
     container.scrollTop = scrollTop;
+    calPageKey = key;
+    container.dataset.calKey = key;
+  }
+
+  // Estado visual de uma célula (cor por faixa, título e seleção)
+  function applyDayState(el, iso) {
+    var reg = mapPorDia[iso];
+
+    el.classList.remove(
+      'cal-day--has-data', 'cal-day--verde', 'cal-day--amarelo',
+      'cal-day--vermelho', 'cal-day--neutro', 'cal-day--selected'
+    );
+
+    if (reg && reg.previstos > 0) {
+      var pct = reg.percentual;
+      el.classList.add('cal-day--has-data');
+      if (pct <= META_ABSENTEISMO) el.classList.add('cal-day--verde');
+      else if (pct <= LIMITE_ALERTA) el.classList.add('cal-day--amarelo');
+      else el.classList.add('cal-day--vermelho');
+      el.title = 'Data: ' + iso + ' | Absenteísmo: ' + pctBr(pct) +
+        ' (' + reg.faltas + '/' + reg.previstos + ')';
+    } else {
+      el.classList.add('cal-day--neutro');
+      el.title = '';
+    }
+
+    if (dayFilter === iso) el.classList.add('cal-day--selected');
+  }
+
+  // Atualização in-place: percorre as células já renderizadas
+  function refreshCalendarioCells(container) {
+    var cells = container.querySelectorAll('.cal-day[data-iso]');
+    for (var i = 0; i < cells.length; i++) {
+      var el = cells[i];
+      var iso = el.dataset.iso;
+      if (iso) applyDayState(el, iso);
+    }
   }
 
   // Atualização in-place da seleção do dia (sem reconstruir o DOM)
@@ -975,7 +1077,7 @@
     var prev = container.querySelectorAll('.cal-day--selected');
     prev.forEach(function (el) { el.classList.remove('cal-day--selected'); });
     if (!iso) return;
-    var el = container.querySelector('.cal-day--has-data[data-iso="' + iso + '"]');
+    var el = container.querySelector('.cal-day[data-iso="' + iso + '"]');
     if (el) el.classList.add('cal-day--selected');
   }
 
@@ -1010,28 +1112,14 @@
 
       var td = document.createElement('td');
       var iso = ano + '-' + String(mes + 1).padStart(2, '0') + '-' + String(dia).padStart(2, '0');
-      var reg = mapPorDia[iso];
 
       var dayBox = document.createElement('div');
       dayBox.className = 'cal-day';
       dayBox.textContent = dia;
+      // Sempre com data-iso: permite o refresh in-place das células
+      dayBox.dataset.iso = iso;
 
-      if (reg && reg.previstos > 0) {
-        dayBox.classList.add('cal-day--has-data');
-        var pct = reg.percentual;
-        if (pct <= META_ABSENTEISMO) dayBox.classList.add('cal-day--verde');
-        else if (pct <= LIMITE_ALERTA) dayBox.classList.add('cal-day--amarelo');
-        else dayBox.classList.add('cal-day--vermelho');
-
-        dayBox.dataset.iso = iso;
-        dayBox.title = 'Data: ' + iso + ' | Absenteísmo: ' + pctBr(pct) + ' (' + reg.faltas + '/' + reg.previstos + ')';
-      } else {
-        dayBox.classList.add('cal-day--neutro');
-      }
-
-      if (dayFilter === iso) {
-        dayBox.classList.add('cal-day--selected');
-      }
+      applyDayState(dayBox, iso);
 
       td.appendChild(dayBox);
       tr.appendChild(td);
@@ -1091,23 +1179,29 @@
     }
   }
 
+  // EVENT DELEGATION: um único listener no container do calendário.
+  // As células de dia podem ser reconstruídas/atualizadas livremente —
+  // nenhum listener é anexado por célula (evita vazamento/escuta múltipla).
   function setupCalendarioClick() {
     var container = document.getElementById('calendario');
     if (!container) return;
+    if (container.dataset.delegation === '1') return; // já registrado
+    container.dataset.delegation = '1';
+    container.addEventListener('click', onCalendarioClick);
+  }
 
-    container.addEventListener('click', function (e) {
-      var target = e.target.closest('.cal-day--has-data');
-      if (!target) return;
+  function onCalendarioClick(e) {
+    var target = e.target && e.target.closest ? e.target.closest('.cal-day--has-data') : null;
+    if (!target) return;
 
-      var iso = target.dataset.iso;
-      if (!iso) return;
+    var iso = target.dataset.iso;
+    if (!iso) return;
 
-      if (dayFilter === iso) {
-        clearDayFilter();
-      } else {
-        applyDayFilter(iso);
-      }
-    });
+    if (dayFilter === iso) {
+      clearDayFilter();
+    } else {
+      applyDayFilter(iso);
+    }
   }
 
   function applyDayFilter(iso) {
@@ -1161,6 +1255,7 @@
 
     if (!rows || !rows.length) {
       container.innerHTML = placeholderVazio();
+      container.dataset.sig = '';
       return;
     }
 
@@ -1175,7 +1270,12 @@
         '</div>';
     });
     html += '</div>';
-    container.innerHTML = html;
+
+    // Assinatura do HTML: pula a reescrita quando nada mudou
+    if (container.dataset.sig !== html) {
+      container.innerHTML = html;
+      container.dataset.sig = html;
+    }
   }
 
   function setupRankExpand() {
@@ -1342,7 +1442,7 @@
     var levelG = geral > metaG ? 'vermelho' : 'verde';
     var levelO = oper > TURNOVER_CRITICO ? 'vermelho' : (oper > metaO ? 'ambar' : 'verde');
 
-    el.innerHTML =
+    var html =
       '<div class="t-kpi" data-level="' + levelG + '">' +
         '<span class="t-kpi__label">Turnover Geral (Com Contratual)</span>' +
         '<span class="t-kpi__value">' + pctBr(geral) + '</span>' +
@@ -1354,6 +1454,11 @@
         '<span class="t-kpi__value">' + pctBr(oper) + '</span>' +
         '<span class="t-kpi__meta">' + operCount + ' deslig. operacionais · Meta ≤ ' + pctBr(metaO) + '</span>' +
       '</div>';
+
+    if (el.dataset.sig !== html) {
+      el.innerHTML = html;
+      el.dataset.sig = html;
+    }
   }
 
   // GRÁFICO 1: HEADCOUNT & MOVIMENTAÇÃO

@@ -6,10 +6,23 @@
 
 /* ---------- 1. CALENDÁRIO DE ABSENTEÍSMO ---------- */
 
-/* Grade de 8 meses (4 colunas x 2 linhas) com rolagem vertical */
+/* Corpo do card: empilha grid + legenda SEM vão entre eles.
+   (sobrepõe justify-content: space-between do style.css) */
+.rhub-cal-body {
+  justify-content: flex-start;
+  gap: 0.75rem;
+  min-height: 0;
+}
+
+/* Grade de 8 meses (4 colunas x 2 linhas) com rolagem vertical.
+   flex + grid-auto-rows fazem os meses ocuparem todo o espaço livre
+   até a borda inferior junto à legenda; o quadro externo não muda. */
 .rhub-cal-grid {
   grid-template-columns: repeat(4, 1fr) !important;
-  max-height: clamp(320px, 46vh, 520px);
+  flex: 1 1 auto;
+  min-height: 0;
+  grid-auto-rows: minmax(min-content, 1fr);
+  max-height: clamp(440px, 66vh, 920px);
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 4px;
@@ -35,6 +48,20 @@
   background: var(--rhub-vinho, #7f1d1d);
 }
 
+/* Mês ocupa a linha inteira e a tabela estica até o rodapé do card
+   (sem espaço morto interno quando a linha é maior que o conteúdo) */
+.rhub-month {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.rhub-month-table {
+  flex: 1 1 auto;
+  width: 100%;
+}
+
 /* Seleção de dia mais visível com a grade rolável */
 .cal-day--selected {
   outline-width: 3px !important;
@@ -51,7 +78,6 @@
 @media (max-width: 768px) {
   .rhub-cal-grid {
     grid-template-columns: repeat(2, 1fr) !important;
-    max-height: 60vh;
   }
 }
 
