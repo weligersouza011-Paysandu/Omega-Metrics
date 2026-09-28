@@ -540,8 +540,17 @@
       return !!(info && info.demissao);
     }
 
-    var statusFaltas = ["FALTA SEM JUSTIFICATIVA", "FALTA", "ATESTADO MÉDICO", "ATESTADO DE ÓBITO", "DECLARAÇÃO", "BO", "ÓBITO", "LICENÇA CASAMENTO", "LICENÇA PATERNIDADE"];
-    var statusPresenca = ["PRESENTE", "ADVERTÊNCIA"];
+    // Comparações de status sempre em MAIÚSCULAS e sem acentos
+    function normStatus(s) {
+      return String(s || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toUpperCase();
+    }
+    var statusFaltas = ["FALTA SEM JUSTIFICATIVA", "FALTA", "ATESTADO MEDICO", "ATESTADO DE OBITO", "DECLARACAO", "BO", "OBITO", "LICENCA CASAMENTO", "LICENCA PATERNIDADE", "SUSPENSAO", "SUSPENCAO"];
+    var statusPresenca = ["PRESENTE", "ADVERTENCIA", "TRABALHO EXTERNO", "RELOGIO BLOQUEADO", "TRABALHO REMOTO"];
 
     var totalFaltas = 0;
     var totalPresencas = 0;
@@ -559,11 +568,11 @@
     function nomeDe(r) { return r.funcionario || r.nome || r.nomeFuncionario || 'Não Identificado'; }
     function cargoDe(r) { return r.funcao || r.cargo || r.nomeCargo || 'Não Definido'; }
     function isFaltaDe(r) {
-      var st = (r.status || '').toUpperCase().trim();
+      var st = normStatus(r.status);
       return statusFaltas.indexOf(st) !== -1;
     }
     function isPresencaDe(r) {
-      var st = (r.status || '').toUpperCase().trim();
+      var st = normStatus(r.status);
       return statusPresenca.indexOf(st) !== -1 || (!st && r.entrada1);
     }
 
