@@ -32,7 +32,9 @@
   var META_ABSENTEISMO = 3.0;
   var LIMITE_ALERTA = 4.0;
   var GAUGE_MAX = 6.0;
-  var CAL_PAGE_MONTHS = 8;
+  // Janela do calendário: 12 meses (grade 4x3 no desktop / 2x6 no mobile),
+  // com o Mês Atual sempre na última posição da grade.
+  var CAL_PAGE_MONTHS = 12;
   var TOP_RANKING = 10;
   var META_TURNOVER_GERAL = 5.0;
   var META_TURNOVER_OPERACIONAL = 3.0;
@@ -53,7 +55,7 @@
   // as cores do período inteiro).
   var mapPorDia = {};
   var mapPorDiaBase = {};
-  var calState = { ano: null, mes: null, anual: false };
+  var calState = { ano: null, mes: null };
 
   // Filtro global cruzado: um único estado para todos os componentes.
   // Cada componente é filtrado por TODAS as dimensões ativas EXCETO a
@@ -386,8 +388,9 @@
     datasDisponiveis = new Set(dates);
     periodoMin = dates[0];
     periodoMax = dates[dates.length - 1];
-    if (!currentRange.inicio) currentRange.inicio = periodoMin;
-    if (!currentRange.fim) currentRange.fim = periodoMax;
+    var padraoLocal = janelaPeriodoPadrao();
+    if (!currentRange.inicio) currentRange.inicio = padraoLocal.inicio;
+    if (!currentRange.fim) currentRange.fim = padraoLocal.fim;
     return true;
   }
 
@@ -407,8 +410,9 @@
         datasDisponiveis = new Set(rawDatas);
         periodoMin = data.periodoMin;
         periodoMax = data.periodoMax;
-        currentRange.inicio = data.periodoMin;
-        currentRange.fim = data.periodoMax;
+        var padrao = janelaPeriodoPadrao();
+        currentRange.inicio = padrao.inicio;
+        currentRange.fim = padrao.fim;
 
         initFlatpickr();
         initSliderValues();
@@ -816,6 +820,39 @@
      3. FILTROS DE PERÍODO & CALENDÁRIO
      ============================================================ */
 
+  // Janela padrão de CAL_PAGE_MONTHS meses terminando no Mês Atual:
+  //   dataFim = mês/ano de new Date()
+  //   início  = dataFim - (CAL_PAGE_MONTHS - 1) meses
+  // Assim o último slot da grade é sempre o Mês Atual e o primeiro é
+  // exatamente 11 meses atrás.
+  function janelaCalPadrao() {
+    var hoje = new Date();
+    return new Date(hoje.getFullYear(), hoje.getMonth() - (CAL_PAGE_MONTHS - 1), 1);
+  }
+
+  // Date -> 'YYYY-MM-DD' no fuso local (sem toISOString, que desloca o dia
+  // em fusos negativos, ex: 01/10 às 00:00 vira 30/09 em UTC).
+  function isoDe(d) {
+    return d.getFullYear() + '-' +
+      String(d.getMonth() + 1).padStart(2, '0') + '-' +
+      String(d.getDate()).padStart(2, '0');
+  }
+
+  // PERÍODO INÍCIO/ATÉ padrão do topo: primeiro dia do Mês Atual - 11 até o
+  // último dia do Mês Atual, limitado ao período que tem dados (mantém
+  // flatpickr/noUiSlider coerentes e evita resposta vazia da API).
+  function janelaPeriodoPadrao() {
+    var hoje = new Date();
+    var iniIso = isoDe(janelaCalPadrao());
+    var fimIso = isoDe(new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0));
+    var pMin = periodoMin ? String(periodoMin).slice(0, 10) : null;
+    var pMax = periodoMax ? String(periodoMax).slice(0, 10) : null;
+    if (pMin && iniIso < pMin) iniIso = pMin;
+    if (pMax && fimIso > pMax) fimIso = pMax;
+    if (pMin && pMax && iniIso > fimIso) { iniIso = pMin; fimIso = pMax; }
+    return { inicio: iniIso, fim: fimIso };
+  }
+
   // A instância noUiSlider é criada em initSliderValues() após o
   // período chegar do servidor/LocalStorage (necessita periodoMin/Max).
   function setupSlider() {
@@ -856,10 +893,10 @@
     };
 
     if (rangeInicio && !rangeInicio._flatpickr) {
-      flatpickr('#range-inicio', Object.assign({}, config, { defaultDate: periodoMin }));
+      flatpickr('#range-inicio', Object.assign({}, config, { defaultDate: currentRange.inicio || periodoMin }));
     }
     if (rangeFim && !rangeFim._flatpickr) {
-      flatpickr('#range-fim', Object.assign({}, config, { defaultDate: periodoMax }));
+      flatpickr('#range-fim', Object.assign({}, config, { defaultDate: currentRange.fim || periodoMax }));
     }
   }
 
@@ -872,8 +909,16 @@
 
     if (slider.noUiSlider) slider.noUiSlider.destroy();
 
+    // Pinos de partida = janela padrão (12 meses até o Mês Atual),
+    // sempre dentro do intervalo de dados.
+    var dIni = currentRange.inicio ? new Date(currentRange.inicio).getTime() : dMin;
+    var dFim = currentRange.fim ? new Date(currentRange.fim).getTime() : dMax;
+    if (isNaN(dIni) || dIni < dMin) dIni = dMin;
+    if (isNaN(dFim) || dFim > dMax) dFim = dMax;
+    if (dIni > dFim) { dIni = dMin; dFim = dMax; }
+
     noUiSlider.create(slider, {
-      start: [dMin, dMax],
+      start: [dIni, dFim],
       connect: true,
       range: { min: dMin, max: dMax },
       step: 24 * 60 * 60 * 1000
@@ -1250,13 +1295,23 @@
     });
   }
 
-  // CALENDÁRIO DE ABSENTEÍSMO (GRID 8 MESES COM ROLAGEM VERTICAL)
+  // CALENDÁRIO DE ABSENTEÍSMO (GRADE DE 12 MESES: MÊS ATUAL NA ÚLTIMA POSIÇÃO)
   // Chave da página de meses atualmente no DOM — permite atualizar as
   // células in-place sem reconstruir o HTML quando a página não muda.
   var calPageKey = null;
 
   function calPageKeyAtual(pageMonths) {
-    return (calState.anual ? 'A' : 'P') + '|' + calState.ano + '|' + calState.mes + '|' + pageMonths;
+    return calState.ano + '|' + calState.mes + '|' + pageMonths;
+  }
+
+  // Garante a âncora (ano/mês) antes de deslizar a janela de meses.
+  function garantirCalAncora() {
+    if (!calState.ano || isNaN(calState.ano) ||
+        calState.mes === null || calState.mes === undefined || isNaN(calState.mes)) {
+      var ref = janelaCalPadrao();
+      calState.ano = ref.getFullYear();
+      calState.mes = ref.getMonth();
+    }
   }
 
   function renderCalendario() {
@@ -1270,14 +1325,11 @@
       return;
     }
 
-    var minDate = new Date(datas[0]);
+    // Âncora padrão: janela de 12 meses terminando no Mês Atual
+    // (slot 12 = mês corrente, slot 1 = 11 meses atrás).
+    garantirCalAncora();
 
-    if (!calState.ano || isNaN(calState.ano)) {
-      calState.ano = minDate.getFullYear();
-      calState.mes = minDate.getMonth();
-    }
-
-    var pageMonths = calState.anual ? 12 : CAL_PAGE_MONTHS;
+    var pageMonths = CAL_PAGE_MONTHS;
     var key = calPageKeyAtual(pageMonths);
 
     // Mesma página de meses no DOM → só atualiza classes/títulos/seleção
@@ -1404,42 +1456,38 @@
   function setupCalendarioControls() {
     var prev = document.getElementById('cal-prev');
     var next = document.getElementById('cal-next');
-    var ano = document.getElementById('cal-ano');
+    var reset = document.getElementById('cal-ano');
 
+    // ‹ › deslizam a janela de 12 meses de 1 em 1 mês
     if (prev) {
       prev.addEventListener('click', function () {
-        calState.ano = calState.ano || new Date().getFullYear();
-        calState.mes -= CAL_PAGE_MONTHS;
+        garantirCalAncora();
+        calState.mes -= 1;
         if (calState.mes < 0) {
           calState.mes += 12;
           calState.ano -= 1;
         }
-        calState.anual = false;
         renderCalendario();
       });
     }
     if (next) {
       next.addEventListener('click', function () {
-        calState.ano = calState.ano || new Date().getFullYear();
-        calState.mes += CAL_PAGE_MONTHS;
+        garantirCalAncora();
+        calState.mes += 1;
         if (calState.mes >= 12) {
           calState.mes -= 12;
           calState.ano += 1;
         }
-        calState.anual = false;
         renderCalendario();
       });
     }
-    if (ano) {
-      ano.addEventListener('click', function () {
-        if (calState.anual) {
-          // Segundo clique: volta para a página de 8 meses na mesma posição
-          calState.anual = false;
-        } else {
-          calState.anual = true;
-          calState.ano = new Date(periodoMin || Date.now()).getFullYear();
-          calState.mes = 0;
-        }
+    // "Período atual": reposiciona a grade na janela padrão
+    // (primeiro slot = mês atual - 11, último slot = mês atual).
+    if (reset) {
+      reset.addEventListener('click', function () {
+        var ref = janelaCalPadrao();
+        calState.ano = ref.getFullYear();
+        calState.mes = ref.getMonth();
         renderCalendario();
       });
     }

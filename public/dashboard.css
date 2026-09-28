@@ -14,7 +14,7 @@
   min-height: 0;
 }
 
-/* Grade de 8 meses (4 colunas x 2 linhas) com rolagem vertical.
+/* Grade de 12 meses (4 colunas x 3 linhas) com rolagem vertical.
    flex + grid-auto-rows fazem os meses ocuparem todo o espaço livre
    até a borda inferior junto à legenda; o quadro externo não muda. */
 .rhub-cal-grid {
@@ -68,7 +68,7 @@
   box-shadow: 0 0 0 2px rgba(127, 29, 29, 0.15);
 }
 
-/* Colunas responsivas: mantém os 8 meses legíveis sem quebrar o layout */
+/* Colunas responsivas: mantém os 12 meses legíveis sem quebrar o layout */
 @media (max-width: 1024px) {
   .rhub-cal-grid {
     grid-template-columns: repeat(3, 1fr) !important;
