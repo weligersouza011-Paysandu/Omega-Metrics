@@ -119,6 +119,8 @@ app.use(compression({ threshold: 1024 }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+app.get('/ping', (req, res) => res.status(200).send('pong'));
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024 },
