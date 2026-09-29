@@ -2414,11 +2414,12 @@
     var btn = document.getElementById('btn-export-pdf');
     if (!btn) return;
 
-    btn.addEventListener('click', function () {
-      if (typeof html2pdf === 'undefined') {
-        window.print();
-        return;
-      }
+    // html2pdf é carregado sob demanda (lazy) para não bloquear o FCP.
+    // O script de ~570 KB é injetado somente quando o usuário clica em PDF.
+    // Nos cliques seguintes, html2pdf já está disponível e o export é imediato.
+    var HTML2PDF_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+
+    function doExport() {
       var element = document.getElementById('rhub-main');
       if (!element) return;
       var opt = {
@@ -2446,6 +2447,24 @@
         restoreCal();
         console.warn('Falha na exportação PDF:', e);
       }
+    }
+
+    btn.addEventListener('click', function () {
+      // Já carregado (2º clique em diante): exporta imediatamente
+      if (typeof html2pdf !== 'undefined') {
+        doExport();
+        return;
+      }
+      // 1º clique: injeta o script e exporta após o carregamento
+      var s = document.createElement('script');
+      s.src = HTML2PDF_CDN;
+      s.onload = doExport;
+      s.onerror = function () {
+        // Fallback: impressão nativa do browser se a CDN falhar
+        console.warn('html2pdf CDN indispon\u00edvel, usando window.print().');
+        window.print();
+      };
+      document.head.appendChild(s);
     });
   }
 

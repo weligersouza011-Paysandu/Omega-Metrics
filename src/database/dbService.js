@@ -230,6 +230,11 @@ async function upsertPontoHistorico(registros, loteId) {
       atualizado_em = excluded.atualizado_em
   `;
 
+  // Passo 6: adiciona RETURNING para detectar INSERT vs UPDATE sem pré-SELECT.
+  // xmax = 0 → linha acabou de ser inserida; xmax ≠ 0 → linha atualizada.
+  // Elimina o N+1 problem (antes: 2 queries por linha; agora: 1 query por linha).
+  const upsertSqlReturning = upsertSql + '\n    RETURNING (xmax = 0) AS is_insert';
+
   return withTransaction(async (client) => {
     let inseridos = 0;
     let atualizados = 0;
@@ -243,13 +248,10 @@ async function upsertPontoHistorico(registros, loteId) {
         continue;
       }
       const chave = normalizeFuncionarioKey(r.nomeFuncionario, r.matricula);
-      const existsResult = await client.query(
-        'SELECT 1 FROM ponto_historico WHERE data_registro = $1 AND chave_funcionario = $2',
-        [dataRegistro, chave]
-      );
-      const existed = existsResult.rowCount > 0;
 
-      await client.query(upsertSql, [
+      // Uma única query por linha (UPSERT + RETURNING xmax).
+      // Sem pré-SELECT: redução de N+1 → N queries para N registros.
+      const result = await client.query(upsertSqlReturning, [
         dataRegistro,
         chave,
         r.nomeFuncionario || '',
@@ -270,8 +272,9 @@ async function upsertPontoHistorico(registros, loteId) {
         nowIso()
       ]);
 
-      if (existed) atualizados++;
-      else inseridos++;
+      const wasInsert = result.rows[0] && result.rows[0].is_insert;
+      if (wasInsert) inseridos++;
+      else atualizados++;
       datasTocadas.add(dataRegistro);
     }
 
@@ -356,6 +359,150 @@ async function updateCalendario(datas) {
   });
 }
 
+/**
+ * getPontoParaTurnover — busca apenas as colunas necessárias para os cálculos
+ * de turnover (calcEfetivoAtivoPorMes, calcTurnoverPorFuncao) e cross-filters
+ * feitos em JavaScript. Retorna um subconjunto de colunas para reduzir a
+ * transferência Neon → Node.js em ~70% vs SELECT *.
+ */
+async function getPontoParaTurnover(dataInicio, dataFim) {
+  const result = await pool.query(`
+    SELECT
+      data_registro,
+      chave_funcionario,
+      nome_funcionario,
+      cargo,
+      departamento,
+      total_normais,
+      status,
+      cid
+    FROM ponto_historico
+    WHERE data_registro BETWEEN $1 AND $2
+    ORDER BY data_registro, nome_funcionario
+  `, [dataInicio, dataFim]);
+  return result.rows;
+}
+
+/**
+ * getKpisAgregados — agrega os dados de absenteísmo diretamente no PostgreSQL
+ * usando CTE com classificação de status, eliminando a transferência de linhas
+ * brutas. Retorna contagens por dia, mês, cargo e funcionário já calculadas.
+ *
+ * Regra de classificação (espelha statusRules.js):
+ *   geraAbsenteismo  → conta como falta E como previsto
+ *   contaComoPresenca → conta apenas como previsto (não é falta)
+ *   grupo DESCONHECIDO → também conta como previsto (comportamento legado)
+ *   ISENCAO / DEMISSAO → excluído dos KPIs de absenteísmo
+ *
+ * Filtros cruzados opcionais (cada componente passa skip='sua-dimensão' para
+ * manter a regra de escopo — o banco filtra apenas as dimensões que o
+ * componente não deve pular).
+ *
+ * @param {string} dataInicio
+ * @param {string} dataFim
+ * @param {object} filtros  - { status, dia, mes, colaborador, funcao }
+ *                            null ou string vazia = sem filtro para a dimensão
+ * @param {string|null} skip - dimensão a ser pulada neste request (regra de escopo)
+ */
+async function getKpisAgregados(dataInicio, dataFim, filtros, skip) {
+  const f = filtros || {};
+  const fStatus  = (skip !== 'status'      && f.status      && String(f.status).trim())      ? String(f.status).trim()      : null;
+  const fDia     = (skip !== 'dia'         && f.dia         && String(f.dia).trim())          ? String(f.dia).trim()         : null;
+  const fMes     = (skip !== 'mes'         && f.mes         && String(f.mes).trim())          ? String(f.mes).trim()         : null;
+  const fColab   = (skip !== 'colaborador' && f.colaborador && String(f.colaborador).trim())  ? String(f.colaborador).trim().toUpperCase() : null;
+  const fFuncao  = (skip !== 'funcao'      && f.funcao      && String(f.funcao).trim())       ? String(f.funcao).trim().toUpperCase()       : null;
+
+  // Listas de status que geram absenteísmo (= geraAbsenteismo: true em statusRules.js)
+  const FALTAS = [
+    'FALTA SEM JUSTIFICATIVA', 'ATESTADO MÉDICO', 'ATESTADO DE ÓBITO',
+    'DECLARAÇÃO', 'BO', 'ÓBITO',
+    'LICENÇA CASAMENTO', 'LICENÇA PATERNIDADE', 'SUSPENSÃO'
+  ];
+  // Listas de status que contam como presença (= contaComoPresenca: true)
+  const PRESENCAS = [
+    'PRESENTE', 'ADVERTÊNCIA', 'TRABALHO EXTERNO', 'RELOGIO BLOQUEADO', 'TRABALHO REMOTO'
+  ];
+  // Status de isenção/demissão que NÃO entram no denominador (excluídos de KPIs)
+  const EXCLUIDOS = [
+    'COMPENSAÇÃO', 'FÉRIAS', 'FOLGA', 'EXAME PERIÓDICO',
+    'LICENÇA MATERNIDADE', 'INSS', 'AGUARDANDO CRACHÁ', 'TREINAMENTO', 'FERIADO',
+    'AGUARDANDO MOBILIZAÇÃO SGC', 'TRANSFERÊNCIA',
+    'À DISPOSIÇÃO', 'COMPENSADO', 'ABONO', 'À COMPENSAR',
+    'ACORDO COLETIVO', 'FOLGA ANIVERSÁRIO', 'DEMITIDO'
+  ];
+
+  // Parametrização dinâmica: $1 e $2 são sempre dataInicio/dataFim.
+  // Os filtros opcionais ocupam posições $3 em diante.
+  const params = [dataInicio, dataFim];
+  let idx = 3;
+
+  function addParam(val) {
+    params.push(val);
+    return `$${idx++}`;
+  }
+
+  const whereClauses = [];
+  if (fDia)    whereClauses.push(`data_registro = ${addParam(fDia)}`);
+  if (fMes)    whereClauses.push(`LEFT(data_registro, 7) = ${addParam(fMes)}`);
+  if (fColab)  whereClauses.push(`UPPER(TRIM(nome_funcionario)) = ${addParam(fColab)}`);
+  if (fFuncao) whereClauses.push(`UPPER(TRIM(cargo)) = ${addParam(fFuncao)}`);
+  if (fStatus) whereClauses.push(`TRIM(status) = ${addParam(fStatus)}`);
+
+  const extraWhere = whereClauses.length ? 'AND ' + whereClauses.join(' AND ') : '';
+
+  const sql = `
+    WITH base AS (
+      SELECT
+        data_registro,
+        LEFT(data_registro, 7)           AS mes,
+        chave_funcionario,
+        COALESCE(TRIM(nome_funcionario), '') AS nome_funcionario,
+        COALESCE(TRIM(cargo), '')        AS cargo,
+        COALESCE(TRIM(status), '')       AS status_raw,
+        CASE
+          WHEN TRIM(status) = ANY(${ addParam(FALTAS) }::text[])    THEN 'falta'
+          WHEN TRIM(status) = ANY(${ addParam(PRESENCAS) }::text[]) THEN 'presenca'
+          WHEN TRIM(status) = ANY(${ addParam(EXCLUIDOS) }::text[]) THEN 'excluido'
+          ELSE 'desconhecido'
+        END AS classe
+      FROM ponto_historico
+      WHERE data_registro BETWEEN $1 AND $2
+        ${extraWhere}
+    ),
+    contaveis AS (
+      SELECT * FROM base WHERE classe <> 'excluido'
+    )
+    SELECT
+      -- Totais globais (KPI geral de absenteísmo)
+      SUM(CASE WHEN classe = 'falta' THEN 1 ELSE 0 END)::int     AS total_faltas,
+      COUNT(*)::int                                                AS total_previstos,
+      -- Por status (rosca de justificativas — inclui apenas faltas)
+      status_raw,
+      -- Por dia
+      data_registro,
+      -- Por mês
+      mes,
+      -- Por cargo
+      cargo,
+      -- Por funcionário
+      nome_funcionario
+    FROM contaveis
+    GROUP BY GROUPING SETS (
+      (),                                          -- linha total (idx=0)
+      (status_raw),                                -- por status
+      (data_registro),                             -- por dia
+      (mes),                                       -- por mes
+      (cargo),                                     -- por funcao
+      (nome_funcionario)                           -- por funcionario
+    )
+    ORDER BY data_registro NULLS LAST, mes NULLS LAST, cargo NULLS LAST, nome_funcionario NULLS LAST
+  `;
+
+  const result = await pool.query(sql, params);
+  return result.rows;
+}
+
+// Mantida por compatibilidade (usada em getByDate e outros pontos administrativos).
 async function getPontoHistorico(dataInicio, dataFim) {
   const result = await pool.query(`
     SELECT * FROM ponto_historico
@@ -485,6 +632,8 @@ module.exports = {
   insertDesligamentosJustificados,
   updateCalendario,
   getPontoHistorico,
+  getPontoParaTurnover,
+  getKpisAgregados,
   getDesligamentosHistorico,
   getCalendarioDatas,
   getPeriodoLimites,

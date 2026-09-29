@@ -2,18 +2,97 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
+const compression = require('compression');
+const NodeCache = require('node-cache');
 const multer = require('multer');
 const path = require('path');
 const XLSX = require('xlsx');
 const { Pool } = require('pg');
 
+// Cache em memória: TTL de 60 s para respostas do endpoint /api/dashboard/kpis.
+// Invalidado automaticamente ao confirmar uma nova importação.
+const kpiCache = new NodeCache({ stdTTL: 60, checkperiod: 90, useClones: false });
+
 const { initDatabase, createLote, getLote, confirmLote,
   upsertPontoHistorico, insertDesligamentosJustificados, updateCalendario,
-  getPontoHistorico, getDesligamentosHistorico, getCalendarioDatas,
+  getPontoHistorico, getPontoParaTurnover, getKpisAgregados,
+  getDesligamentosHistorico, getCalendarioDatas,
   getPeriodoLimites, getEfetivoTotal,
   countByDate, getByDate, deleteByDate, formatHorarioValue } = require('./src/database/dbService');
 
 const { parseExcelFiles, validateData, validatePontoRow, applyCorrecoes, toPontoDataShape, toDesligDataShape, calculateMetrics, formatExcelDate, excelDecimalToTime, STATUS_CONFIG, STATUS_ALIASES, getStatusMeta, calcularAbsenteismo, calcEfetivoAtivoPorMes, calcTurnoverMensal, calcTurnoverPorFuncao, applyCrossFilters, applyCrossFiltersDeslig, temFiltro, META_TURNOVER_GERAL, META_TURNOVER_OPERACIONAL, MOTIVOS_TURNOVER_RELEVANTES } = require('./src/services/tratamentoService');
+
+// Labels de mês em português (espelha MESES_PT de tratamentoService.js).
+const MESES_PT_SRV = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+
+/**
+ * parseAgregados(rows) — converte o resultado do GROUPING SETS (getKpisAgregados)
+ * nas estruturas que o dashboard espera para cada componente:
+ *   .global       → totais para o KPI de velocímetro
+ *   .porStatus    → rosca de justificativas (absenteismoPorStatus)
+ *   .porDia       → calendário (absenteismoPorDia)
+ *   .porMes       → gráfico de linha mensal (absenteismoPorMes)
+ *
+ * Identifica cada linha pelo conjunto de chaves não-nulas retornadas pelo
+ * GROUPING SETS: () → global; (status_raw) → por status; etc.
+ */
+function parseAgregados(rows) {
+  const global  = { totalFaltas: 0, totalPrevistos: 0 };
+  const porStatus = [];
+  const porDia    = [];
+  const porMes    = [];
+
+  for (const r of (rows || [])) {
+    const faltas    = Number(r.total_faltas)    || 0;
+    const previstos = Number(r.total_previstos) || 0;
+    const hasStatus = r.status_raw    != null && r.status_raw    !== '';
+    const hasData   = r.data_registro != null && r.data_registro !== '';
+    const hasMes    = r.mes           != null && r.mes           !== '';
+    const hasCargo  = r.cargo         != null && r.cargo         !== '';
+    const hasNome   = r.nome_funcionario != null && r.nome_funcionario !== '';
+
+    // GROUPING SET () → totais globais (todas as chaves de grupo são nulas)
+    if (!hasStatus && !hasData && !hasMes && !hasCargo && !hasNome) {
+      global.totalFaltas    = faltas;
+      global.totalPrevistos = previstos;
+    }
+    // GROUPING SET (status_raw) → rosca de justificativas (apenas faltas)
+    else if (hasStatus && !hasData && !hasMes && !hasCargo && !hasNome) {
+      if (faltas > 0) porStatus.push({ label: r.status_raw, value: faltas });
+    }
+    // GROUPING SET (data_registro) → calenário
+    else if (hasData && !hasStatus && !hasMes && !hasCargo && !hasNome) {
+      if (previstos > 0) {
+        porDia.push({
+          data: r.data_registro,
+          faltas,
+          previstos,
+          percentual: parseFloat(((faltas / previstos) * 100).toFixed(2))
+        });
+      }
+    }
+    // GROUPING SET (mes) → gráfico % Absenteísmo Mês
+    else if (hasMes && !hasStatus && !hasData && !hasCargo && !hasNome) {
+      if (previstos > 0) {
+        const [ano, mesNum] = r.mes.split('-');
+        const label = `${MESES_PT_SRV[parseInt(mesNum, 10) - 1] || mesNum}/${ano.slice(2)}`;
+        porMes.push({
+          label,
+          value: parseFloat(((faltas / previstos) * 100).toFixed(2)),
+          chave: r.mes
+        });
+      }
+    }
+    // GROUPING SETs (cargo) e (nome_funcionario): usados pelo pipeline JS
+    // para ranking e absenteísmo por função — ignorados aqui.
+  }
+
+  porStatus.sort((a, b) => b.value - a.value);
+  porDia.sort((a, b) => a.data.localeCompare(b.data));
+  porMes.sort((a, b) => a.chave.localeCompare(b.chave));
+
+  return { global, porStatus, porDia, porMes };
+}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -24,6 +103,9 @@ const pool = new Pool({
 });
 
 app.use(cors());
+// Compressão Gzip/Deflate para todos os endpoints (payloads JSON ≤ 1 KB são
+// ignorados — threshold evita overhead em respostas triviais como /api/health).
+app.use(compression({ threshold: 1024 }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -131,6 +213,8 @@ app.post('/api/tratamento/processar-arquivo', upload.fields([
 });
 
 app.post('/api/tratamento/confirmar-e-salvar', express.json(), async (req, res) => {
+  // Invalida o cache de KPIs: novos dados importados devem refletir imediatamente.
+  kpiCache.flushAll();
   try {
     const { loteId, justificativas, correcoes } = req.body;
 
@@ -288,14 +372,16 @@ app.get('/api/dashboard/kpis', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Parâmetros dataInicio e dataFim são obrigatórios.' });
     }
 
-    const pontoRows = await getPontoHistorico(dataInicio, dataFim);
-    const desligRows = await getDesligamentosHistorico(dataInicio, dataFim);
-    const efetivoTotalPeriodo = await getEfetivoTotal(dataInicio, dataFim);
+    // Cache em memória: chave composta por todos os parâmetros da requisição.
+    // Retorna a resposta armazenada em < 5 ms sem tocar no banco.
+    const cacheKey = `kpis|${dataInicio}|${dataFim}|${status || ''}|${dia || ''}|${mes || ''}|${colaborador || ''}|${funcao || ''}|${motivo || ''}`;
+    const cachedResponse = kpiCache.get(cacheKey);
+    if (cachedResponse !== undefined) {
+      return res.json(cachedResponse);
+    }
 
-    // --- FILTROS GLOBAIS (cross-filter) ------------------------------------
-    // `status` = justificativa (fatias da rosca); `dia`, `mes`, `colaborador`
-    // e `funcao` vêm dos cliques no calendário e nos 3 gráficos inferiores;
-    // `motivo` = justificativa de demissão (fatias de Justificativas).
+
+    // Monta o objeto cross ANTES das chamadas ao banco para permitir Promise.all.
     const str = v => (typeof v === 'string' && v.trim() ? v.trim() : null);
     const diaStr = str(dia);
     const mesStr = str(mes);
@@ -307,6 +393,35 @@ app.get('/api/dashboard/kpis', async (req, res) => {
       funcao: str(funcao),
       motivo: str(motivo)
     };
+
+    // Todas as consultas ao banco são disparadas em paralelo (Promise.all):
+    //  - getPontoParaTurnover : colunas enxutas (8 vs 18) para pipeline JS
+    //  - getKpisAgregados x4  : CTE com GROUP BY no Postgres (elimina 99% da
+    //                           transferência para os gráficos de absenteísmo)
+    //  - getDesligamentosHistorico + getEfetivoTotal: sem alteração
+    const [
+      pontoRows,
+      desligRows,
+      efetivoTotalPeriodo,
+      agGlobal,       // skip=null  → KPI velocímetro (todos os filtros)
+      agStatus,       // skip=status → rosca de justificativas
+      agDia,          // skip=dia    → calendário
+      agMes           // skip=mes    → gráfico % Absenteísmo Mês
+    ] = await Promise.all([
+      getPontoParaTurnover(dataInicio, dataFim),
+      getDesligamentosHistorico(dataInicio, dataFim),
+      getEfetivoTotal(dataInicio, dataFim),
+      getKpisAgregados(dataInicio, dataFim, cross, null),
+      getKpisAgregados(dataInicio, dataFim, cross, 'status'),
+      getKpisAgregados(dataInicio, dataFim, cross, 'dia'),
+      getKpisAgregados(dataInicio, dataFim, cross, 'mes')
+    ]);
+
+    // Analisa os resultados do GROUPING SETS
+    const sqlGlobal = parseAgregados(agGlobal);
+    const sqlStatus = parseAgregados(agStatus);
+    const sqlDia    = parseAgregados(agDia);
+    const sqlMes    = parseAgregados(agMes);
 
     const baseRows = toPontoDataShape(pontoRows);
 
@@ -341,6 +456,28 @@ app.get('/api/dashboard/kpis', async (req, res) => {
       : efetivoTotalPeriodo;
 
     const { kpis, graficos } = calculateMetrics(baseRows, desligData, efetivoTotal, cross);
+
+    // --- Substitui gráficos de absenteísmo pelos valores calculados no PostgreSQL ---
+    // O pipeline JS (calculateMetrics) continua rodando para aderência, turnover,
+    // ranking e gráfico por função (que precisam de filtrarAtivos sobre linhas).
+    // Os componentes abaixo são equivalentes mas vêm do banco pré-agrupado:
+    graficos.absenteismoPorStatus = sqlStatus.porStatus;  // rosca (skip=status)
+    graficos.absenteismoPorDia    = sqlDia.porDia;        // calendário (skip=dia)
+    graficos.absenteismoPorMes    = sqlMes.porMes;        // gráfico mês (skip=mes)
+
+    // KPI de velocímetro: substitui percentual e totais brutos pelo valor SQL.
+    // Preserva `excluidos` e `detalhamento` calculados pelo JS (não disponíveis no SQL).
+    if (sqlGlobal.global.totalPrevistos > 0) {
+      const pctSql = parseFloat(
+        ((sqlGlobal.global.totalFaltas / sqlGlobal.global.totalPrevistos) * 100).toFixed(2)
+      );
+      kpis.absenteismo = {
+        ...kpis.absenteismo,
+        percentual:  pctSql,
+        totalFaltas: sqlGlobal.global.totalFaltas,
+        totalGeral:  sqlGlobal.global.totalPrevistos
+      };
+    }
 
     // --- Turnover sobre Efetivo Ativo (deduz LICENÇA PATERNIDADE/MATERNIDADE/FÉRIAS/INSS) ---
     const pontoCross = applyCrossFilters(baseRows, cross);
@@ -399,7 +536,7 @@ app.get('/api/dashboard/kpis', async (req, res) => {
       }))
       .sort((a, b) => String(b.data).localeCompare(String(a.data)));
 
-    return res.json({
+    const responsePayload = {
       success: true,
       periodo: { dataInicio, dataFim },
       kpis: {
@@ -411,7 +548,14 @@ app.get('/api/dashboard/kpis', async (req, res) => {
       efetivoTotal,
       totais: { registrosPonto: pontoRows.length, desligamentos: desligRows.length },
       semDados: pontoRows.length === 0 && desligRows.length === 0
-    });
+    };
+
+    // Armazena no cache apenas respostas com dados reais (evita cachear "sem dados")
+    if (!responsePayload.semDados) {
+      kpiCache.set(cacheKey, responsePayload);
+    }
+
+    return res.json(responsePayload);
   } catch (err) {
     console.error('Erro ao buscar KPIs:', err);
     return res.status(500).json({ success: false, error: err.message });

@@ -14,12 +14,12 @@
   <link href="dashboard.css" rel="stylesheet">
 
   <!-- BIBLIOTECAS VENDOR (CDN) — carregadas antes do corpo/script principal -->
-  <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
-  <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/pt.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/nouislider/dist/nouislider.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/pt.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/nouislider/dist/nouislider.min.js"></script>
+  <!-- html2pdf carregado sob demanda (lazy) ao clicar em Exportar PDF -->
 </head>
 <body class="rhub-app">
 
@@ -375,7 +375,7 @@
   </div>
 
   <!-- CÓDIGO DA APLICAÇÃO (após DOM — vendors já carregados no <head>) -->
-  <script src="js/omega-loader.js"></script>
-  <script src="js/dashboard.js"></script>
+  <script defer src="js/omega-loader.js"></script>
+  <script defer src="js/dashboard.js"></script>
 </body>
 </html>
