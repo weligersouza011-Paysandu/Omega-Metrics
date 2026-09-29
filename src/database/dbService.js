@@ -417,21 +417,23 @@ async function getKpisAgregados(dataInicio, dataFim, filtros, skip) {
 
   // Listas de status que geram absenteísmo (= geraAbsenteismo: true em statusRules.js)
   const FALTAS = [
-    'FALTA SEM JUSTIFICATIVA', 'ATESTADO MÉDICO', 'ATESTADO DE ÓBITO',
-    'DECLARAÇÃO', 'BO', 'ÓBITO',
-    'LICENÇA CASAMENTO', 'LICENÇA PATERNIDADE', 'SUSPENSÃO'
+    'FALTA SEM JUSTIFICATIVA', 'FALTA', 'ATESTADO MÉDICO', 'ATESTADO MEDICO', 'ATESTADO',
+    'ATESTADO DE ÓBITO', 'ATESTADO DE OBITO', 'DECLARAÇÃO', 'DECLARACAO', 'DECLARACAO BANCO',
+    'BO', 'BOLETIM DE OCORRENCIA', 'ÓBITO', 'OBITO',
+    'LICENÇA CASAMENTO', 'LICENCA CASAMENTO', 'LICENÇA PATERNIDADE', 'LICENCA PATERNIDADE',
+    'SUSPENSÃO', 'SUSPENSAO', 'SUSPENCAO'
   ];
   // Listas de status que contam como presença (= contaComoPresenca: true)
   const PRESENCAS = [
-    'PRESENTE', 'ADVERTÊNCIA', 'TRABALHO EXTERNO', 'RELOGIO BLOQUEADO', 'TRABALHO REMOTO'
+    'PRESENTE', 'ADVERTÊNCIA', 'ADVERTENCIA', 'TRABALHO EXTERNO', 'RELOGIO BLOQUEADO', 'TRABALHO REMOTO'
   ];
   // Status de isenção/demissão que NÃO entram no denominador (excluídos de KPIs)
   const EXCLUIDOS = [
-    'COMPENSAÇÃO', 'FÉRIAS', 'FOLGA', 'EXAME PERIÓDICO',
-    'LICENÇA MATERNIDADE', 'INSS', 'AGUARDANDO CRACHÁ', 'TREINAMENTO', 'FERIADO',
-    'AGUARDANDO MOBILIZAÇÃO SGC', 'TRANSFERÊNCIA',
-    'À DISPOSIÇÃO', 'COMPENSADO', 'ABONO', 'À COMPENSAR',
-    'ACORDO COLETIVO', 'FOLGA ANIVERSÁRIO', 'DEMITIDO'
+    'COMPENSAÇÃO', 'COMPENSACAO', 'FÉRIAS', 'FERIAS', 'FOLGA', 'JUSTIFICADO FOLGA', 'EXAME PERIÓDICO', 'EXAME PERIODICO', 'EXAME',
+    'LICENÇA MATERNIDADE', 'LICENCA MATERNIDADE', 'INSS', 'LICENCA INSS', 'AGUARDANDO CRACHÁ', 'AGUARDANDO CRACHA',
+    'TREINAMENTO', 'FERIADO', 'AGUARDANDO MOBILIZAÇÃO SGC', 'TRANSFERÊNCIA',
+    'À DISPOSIÇÃO', 'A DISPOSICAO', 'DISPOSICAO', 'COMPENSADO', 'ABONO', 'À COMPENSAR', 'A COMPENSAR',
+    'ACORDO COLETIVO', 'FOLGA ANIVERSÁRIO', 'FOLGA ANIVERSARIO', 'DEMITIDO', 'DEMISSAO', 'DEMISSÃO', 'DESLIGADO', 'RESCISAO', 'RESCISÃO'
   ];
 
   // Parametrização dinâmica: $1 e $2 são sempre dataInicio/dataFim.
@@ -449,7 +451,7 @@ async function getKpisAgregados(dataInicio, dataFim, filtros, skip) {
   if (fMes)    whereClauses.push(`LEFT(data_registro, 7) = ${addParam(fMes)}`);
   if (fColab)  whereClauses.push(`UPPER(TRIM(nome_funcionario)) = ${addParam(fColab)}`);
   if (fFuncao) whereClauses.push(`UPPER(TRIM(cargo)) = ${addParam(fFuncao)}`);
-  if (fStatus) whereClauses.push(`TRIM(status) = ${addParam(fStatus)}`);
+  if (fStatus) whereClauses.push(`UPPER(TRIM(status)) = ${addParam(fStatus.toUpperCase())}`);
 
   const extraWhere = whereClauses.length ? 'AND ' + whereClauses.join(' AND ') : '';
 
@@ -457,15 +459,15 @@ async function getKpisAgregados(dataInicio, dataFim, filtros, skip) {
     WITH base AS (
       SELECT
         data_registro,
-        LEFT(data_registro, 7)           AS mes,
+        LEFT(data_registro, 7)               AS mes,
         chave_funcionario,
         COALESCE(TRIM(nome_funcionario), '') AS nome_funcionario,
-        COALESCE(TRIM(cargo), '')        AS cargo,
-        COALESCE(TRIM(status), '')       AS status_raw,
+        COALESCE(TRIM(cargo), '')            AS cargo,
+        COALESCE(TRIM(status), '')           AS status_raw,
         CASE
-          WHEN TRIM(status) = ANY(${ addParam(FALTAS) }::text[])    THEN 'falta'
-          WHEN TRIM(status) = ANY(${ addParam(PRESENCAS) }::text[]) THEN 'presenca'
-          WHEN TRIM(status) = ANY(${ addParam(EXCLUIDOS) }::text[]) THEN 'excluido'
+          WHEN UPPER(TRIM(status)) = ANY(${ addParam(FALTAS) }::text[])    THEN 'falta'
+          WHEN UPPER(TRIM(status)) = ANY(${ addParam(PRESENCAS) }::text[]) THEN 'presenca'
+          WHEN UPPER(TRIM(status)) = ANY(${ addParam(EXCLUIDOS) }::text[]) THEN 'excluido'
           ELSE 'desconhecido'
         END AS classe
       FROM ponto_historico
@@ -488,14 +490,15 @@ async function getKpisAgregados(dataInicio, dataFim, filtros, skip) {
       -- Por cargo
       cargo,
       -- Por funcionário
-      nome_funcionario
+      nome_funcionario,
+      chave_funcionario
     FROM contaveis
     GROUP BY GROUPING SETS (
-      (),                                          -- linha total (idx=0)
-      (status_raw),                                -- por status
-      (data_registro),                             -- por dia
-      (mes),                                       -- por mes
-      (nome_funcionario, cargo)                    -- por funcionario com funcao (serve p/ ranking e funcao)
+      (),                                                       -- linha total (idx=0)
+      (status_raw),                                             -- por status
+      (data_registro),                                          -- por dia
+      (mes),                                                    -- por mes
+      (chave_funcionario, nome_funcionario, cargo)             -- por funcionario com funcao e chave
     )
     ORDER BY data_registro NULLS LAST, mes NULLS LAST, cargo NULLS LAST, nome_funcionario NULLS LAST
   `;
@@ -515,6 +518,13 @@ async function getPontoHistorico(dataInicio, dataFim) {
 }
 
 async function getDesligamentosHistorico(dataInicio, dataFim) {
+  if (!dataInicio || !dataFim) {
+    const result = await pool.query(`
+      SELECT * FROM desligamentos_justificados
+      ORDER BY data_desligamento, nome_funcionario
+    `);
+    return result.rows;
+  }
   const result = await pool.query(`
     SELECT * FROM desligamentos_justificados
     WHERE data_desligamento BETWEEN $1 AND $2

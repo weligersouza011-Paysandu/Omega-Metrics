@@ -44,25 +44,27 @@ function parseAgregados(rows) {
   const porFuncionarioCargo = [];
 
   for (const r of (rows || [])) {
-    const faltas    = Number(r.total_faltas)    || 0;
-    const previstos = Number(r.total_previstos) || 0;
-    const hasStatus = r.status_raw    != null && r.status_raw    !== '';
-    const hasData   = r.data_registro != null && r.data_registro !== '';
-    const hasMes    = r.mes           != null && r.mes           !== '';
-    const hasCargo  = r.cargo         != null && r.cargo         !== '';
-    const hasNome   = r.nome_funcionario != null && r.nome_funcionario !== '';
+    const faltas    = parseInt(r.total_faltas || r.faltas || 0, 10);
+    const previstos = parseInt(r.total_previstos || r.previstos || 0, 10);
+    const hasStatus = Boolean(r.status_raw && String(r.status_raw).trim());
+    const hasData   = Boolean(r.data_registro && String(r.data_registro).trim());
+    const hasMes    = Boolean(r.mes && String(r.mes).trim());
+    const hasCargo  = Boolean(r.cargo && String(r.cargo).trim());
+    const nomeFunc  = String(r.nome_funcionario || '').trim();
+    const chaveFunc = String(r.chave_funcionario || '').trim();
+    const hasNome   = Boolean(nomeFunc && nomeFunc !== 'TOTAL');
 
     // GROUPING SET () → totais globais (todas as chaves de grupo são nulas)
-    if (!hasStatus && !hasData && !hasMes && !hasCargo && !hasNome) {
+    if (!hasStatus && !hasData && !hasMes && !hasCargo && !hasNome && !chaveFunc) {
       global.totalFaltas    = faltas;
       global.totalPrevistos = previstos;
     }
     // GROUPING SET (status_raw) → rosca de justificativas (apenas faltas)
-    else if (hasStatus && !hasData && !hasMes && !hasCargo && !hasNome) {
+    else if (hasStatus && !hasData && !hasMes && !hasCargo && !hasNome && !chaveFunc) {
       if (faltas > 0) porStatus.push({ label: r.status_raw, value: faltas });
     }
-    // GROUPING SET (data_registro) → calenário
-    else if (hasData && !hasStatus && !hasMes && !hasCargo && !hasNome) {
+    // GROUPING SET (data_registro) → calendário
+    else if (hasData && !hasStatus && !hasMes && !hasCargo && !hasNome && !chaveFunc) {
       if (previstos > 0) {
         porDia.push({
           data: r.data_registro,
@@ -73,7 +75,7 @@ function parseAgregados(rows) {
       }
     }
     // GROUPING SET (mes) → gráfico % Absenteísmo Mês
-    else if (hasMes && !hasStatus && !hasData && !hasCargo && !hasNome) {
+    else if (hasMes && !hasStatus && !hasData && !hasCargo && !hasNome && !chaveFunc) {
       if (previstos > 0) {
         const [ano, mesNum] = r.mes.split('-');
         const label = `${MESES_PT_SRV[parseInt(mesNum, 10) - 1] || mesNum}/${ano.slice(2)}`;
@@ -84,14 +86,21 @@ function parseAgregados(rows) {
         });
       }
     }
-    // GROUPING SET (nome_funcionario, cargo) → Ranking e Absenteísmo por Função
-    else if (hasNome && !hasStatus && !hasData && !hasMes) {
+    // GROUPING SET (chave_funcionario, nome_funcionario, cargo) → Ranking e Absenteísmo por Função
+    // NÃO valida !r.cargo pois 'cargo' vem preenchido neste GROUPING SET
+    else if ((hasNome || chaveFunc) && !hasStatus && !hasData && !hasMes) {
       if (previstos > 0) {
         porFuncionarioCargo.push({
-          nome: r.nome_funcionario,
-          funcao: r.cargo,
+          chave: chaveFunc,
+          nome: nomeFunc,
+          nome_funcionario: nomeFunc,
+          chave_funcionario: chaveFunc,
+          cargo: r.cargo || '',
+          funcao: r.cargo || '',
           faltas,
-          previstos
+          previstos,
+          total_faltas: faltas,
+          total_previstos: previstos
         });
       }
     }
@@ -424,7 +433,8 @@ app.get('/api/dashboard/kpis', async (req, res) => {
       agGlobal,
       agStatusOpt,
       agDiaOpt,
-      agMesOpt
+      agMesOpt,
+      todosDesligRows
     ] = await Promise.all([
       getPontoParaTurnover(dataInicio, dataFim),
       getDesligamentosHistorico(dataInicio, dataFim),
@@ -432,7 +442,8 @@ app.get('/api/dashboard/kpis', async (req, res) => {
       getKpisAgregados(dataInicio, dataFim, cross, null),
       needsStatusQuery ? getKpisAgregados(dataInicio, dataFim, cross, 'status') : Promise.resolve(null),
       needsDiaQuery    ? getKpisAgregados(dataInicio, dataFim, cross, 'dia')    : Promise.resolve(null),
-      needsMesQuery    ? getKpisAgregados(dataInicio, dataFim, cross, 'mes')    : Promise.resolve(null)
+      needsMesQuery    ? getKpisAgregados(dataInicio, dataFim, cross, 'mes')    : Promise.resolve(null),
+      getDesligamentosHistorico()
     ]);
 
     const agStatus = agStatusOpt || agGlobal;
@@ -444,6 +455,7 @@ app.get('/api/dashboard/kpis', async (req, res) => {
     const sqlStatus = parseAgregados(agStatus);
     const sqlDia    = parseAgregados(agDia);
     const sqlMes    = parseAgregados(agMes);
+
 
     const baseRows = toPontoDataShape(pontoRows);
 
@@ -487,23 +499,51 @@ app.get('/api/dashboard/kpis', async (req, res) => {
     graficos.absenteismoPorDia    = sqlDia.porDia;        // calendário (skip=dia)
     graficos.absenteismoPorMes    = sqlMes.porMes;        // gráfico mês (skip=mes)
 
-    // Ranking e Gráfico por Função (filtrando demitidos/desligados)
-    const demitidosUpper = new Set(desligData.map(d => String(d.nome || '').trim().toUpperCase()));
-    const ativosFuncCargo = sqlGlobal.porFuncionarioCargo.filter(
-      r => !demitidosUpper.has(String(r.nome || '').trim().toUpperCase())
+    // Ranking e Gráfico por Função (FILTRAGEM RIGOROSA DE COLABORADORES ATIVOS)
+    const desligados = [...(todosDesligRows || []), ...(desligRows || []), ...(desligData || [])];
+    const demitidosSet = new Set(
+      desligados
+        .map(d => String(d.nome_funcionario || d.nome || '').trim().toUpperCase())
+        .filter(Boolean)
     );
+    desligados.forEach(d => {
+      const chave = String(d.chave_funcionario || d.chave || '').trim().toUpperCase();
+      if (chave) demitidosSet.add(chave);
+      if (d.matricula) {
+        const mat = String(d.matricula).trim().toUpperCase();
+        if (mat) demitidosSet.add('MAT_' + mat);
+      }
+    });
 
-    graficos.rankingAbsenteismo = ativosFuncCargo
-      .map(r => ({
-        nome: r.nome,
-        funcao: r.funcao,
-        faltas: r.faltas,
-        previstos: r.previstos,
-        percentual: r.previstos > 0 ? parseFloat(((r.faltas / r.previstos) * 100).toFixed(2)) : 0
-      }))
-      .filter(r => r.percentual > 0)
-      .sort((a, b) => b.percentual - a.percentual || a.nome.localeCompare(b.nome))
-      .slice(0, 10);
+    const ativosFuncCargo = sqlGlobal.porFuncionarioCargo.filter(row => {
+      const nomeLimpo = String(row.nome_funcionario || row.nome || '').trim().toUpperCase();
+      const chaveLimpa = String(row.chave_funcionario || row.chave || '').trim().toUpperCase();
+      if (nomeLimpo && demitidosSet.has(nomeLimpo)) return false;
+      if (chaveLimpa && demitidosSet.has(chaveLimpa)) return false;
+      return true;
+    });
+
+    const rankingMapped = ativosFuncCargo.map(row => {
+      const totalFaltas = parseInt(row.total_faltas || row.faltas || 0, 10);
+      const totalPrevistos = parseInt(row.total_previstos || row.previstos || 0, 10);
+      const percentual = totalPrevistos > 0 ? Number(((totalFaltas / totalPrevistos) * 100).toFixed(2)) : 0;
+      const rotulo = `${percentual.toFixed(2).replace('.', ',')}% (${totalFaltas}f)`;
+      return {
+        nome: row.nome_funcionario || row.nome || '',
+        chave: row.chave_funcionario || row.chave || '',
+        funcao: row.cargo || row.funcao || '',
+        faltas: totalFaltas,
+        previstos: totalPrevistos,
+        percentual,
+        rotulo
+      };
+    });
+
+    const comFaltas = rankingMapped.filter(r => r.faltas > 0);
+    const rankingFinal = (comFaltas.length > 0 ? comFaltas : rankingMapped)
+      .sort((a, b) => (b.faltas - a.faltas) || (b.percentual - a.percentual) || a.nome.localeCompare(b.nome));
+
+    graficos.rankingAbsenteismo = rankingFinal.slice(0, 10);
 
     const funcaoMap = {};
     for (const r of ativosFuncCargo) {

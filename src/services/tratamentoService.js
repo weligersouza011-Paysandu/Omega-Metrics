@@ -917,14 +917,19 @@ function calcAbsenteismoPorFuncionario(pontoData) {
   }
 
   return Object.entries(porPessoa)
-    .filter(([, d]) => d.previstos > 0)
-    .map(([nome, dados]) => ({
-      nome,
-      faltas: dados.faltas,
-      previstos: dados.previstos,
-      percentual: parseFloat(((dados.faltas / dados.previstos) * 100).toFixed(2))
-    }))
-    .sort((a, b) => b.percentual - a.percentual || b.faltas - a.faltas);
+    .filter(([, d]) => d.previstos > 0 && d.faltas > 0)
+    .map(([nome, dados]) => {
+      const percentual = parseFloat(((dados.faltas / dados.previstos) * 100).toFixed(2));
+      const rotulo = `${percentual.toFixed(2).replace('.', ',')}% (${dados.faltas}f)`;
+      return {
+        nome,
+        faltas: dados.faltas,
+        previstos: dados.previstos,
+        percentual,
+        rotulo
+      };
+    })
+    .sort((a, b) => (b.faltas - a.faltas) || (b.percentual - a.percentual) || a.nome.localeCompare(b.nome));
 }
 
 function calcAderencia(pontoData) {

@@ -16,23 +16,65 @@
 </head>
 <body class="rhub-app">
 
+  <!-- ============ ZONA DE GATILHO & SIDEBAR RETRÁTIL (HOVER) ============ -->
+  <div id="sidebar-hover-trigger" class="eng-hover-trigger sidebar-hover-trigger" aria-hidden="true"></div>
+
+  <aside id="sidebar-hover-menu" class="eng-sidebar sidebar-hover-menu" aria-label="Menu Lateral">
+    <div class="eng-sidebar__header sidebar-hover-menu__header">
+      <a href="dashboard.html" class="eng-sidebar__brand sidebar-hover-menu__brand">
+        <img src="assets/logo.png" alt="Omega Service" class="eng-sidebar__logo sidebar-hover-menu__logo">
+        <div class="eng-sidebar__brand-info sidebar-hover-menu__brand-info">
+          <span class="eng-sidebar__title sidebar-hover-menu__title">OMEGA <strong>SERVICE</strong></span>
+          <span class="eng-sidebar__subtitle sidebar-hover-menu__subtitle">RHUB CT251</span>
+        </div>
+      </a>
+    </div>
+
+    <nav class="eng-sidebar__nav sidebar-hover-menu__nav">
+      <span class="eng-sidebar__category sidebar-hover-menu__category">Navegação</span>
+      <ul class="eng-sidebar__links sidebar-hover-menu__links">
+        <li>
+          <a href="dashboard.html" class="eng-sidebar__link sidebar-hover-menu__link" data-sidebar-page="rh">
+            <i class="bi bi-speedometer2"></i>
+            <span>Página de RH</span>
+          </a>
+        </li>
+        <li>
+          <a href="gestao_usuarios.html" class="eng-sidebar__link sidebar-hover-menu__link" data-sidebar-page="usuarios">
+            <i class="bi bi-people-fill"></i>
+            <span>Gestão de Usuários</span>
+          </a>
+        </li>
+      </ul>
+    </nav>
+
+    <div class="eng-sidebar__footer sidebar-hover-menu__footer">
+      <div class="eng-sidebar__user-badge sidebar-hover-menu__user-badge">
+        <i class="bi bi-shield-check"></i>
+        <span>Omega RHUB CT251</span>
+      </div>
+    </div>
+  </aside>
+
+  <div id="sidebar-hover-backdrop" class="sidebar-hover-backdrop" aria-hidden="true"></div>
+
   <!-- ============ CABEÇALHO SUPERIOR UNIFICADO (ENG-TOPNAV) ============ -->
   <header class="eng-topnav no-print" data-page="gestao">
-    <!-- Logo Omega Service -->
+    <!-- Logo Omega Service & RH -->
     <a href="dashboard.html" class="eng-topnav__brand">
       <img src="assets/logo.png" alt="Omega Service" class="eng-topnav__logo-img">
-      <span class="eng-topnav__brand-name">OMEGA <strong>SERVICE</strong></span>
+      <span class="eng-topnav__brand-name">OMEGA <strong>SERVICE</strong> &middot; RH</span>
     </a>
 
-    <!-- Abas de Navegação -->
+    <!-- Abas de Navegação Centralizadas -->
     <nav class="eng-topnav__tabs" aria-label="Navegação principal">
-      <a href="dashboard.html"           class="eng-topnav__tab" data-tab="dashboard">
+      <a href="dashboard.html" class="eng-topnav__tab" data-tab="dashboard">
         <i class="bi bi-speedometer2"></i> <span>Dashboard</span>
       </a>
-      <a href="tratamento.html"          class="eng-topnav__tab" data-tab="tratamento">
+      <a href="tratamento.html" class="eng-topnav__tab" data-tab="tratamento">
         <i class="bi bi-cloud-arrow-up"></i> <span>Tratamento</span>
       </a>
-      <a href="gerenciamento_dados.html" class="eng-topnav__tab" data-tab="gestao">
+      <a href="gerenciamento_dados.html" class="eng-topnav__tab active" data-tab="gestao" aria-current="page">
         <i class="bi bi-database-down"></i> <span>Gestão de Dados</span>
       </a>
     </nav>
@@ -42,12 +84,6 @@
       <span class="eng-topnav__date" id="data-por-extenso">—</span>
     </div>
   </header>
-  <script>
-    (function(){
-      var tab = document.querySelector('.eng-topnav__tab[data-tab="gestao"]');
-      if (tab) { tab.classList.add('active'); tab.setAttribute('aria-current','page'); }
-    })();
-  </script>
 
   <!-- ============ HERO ============ -->
   <section class="rhub-hero">
@@ -203,5 +239,6 @@
   <div class="toast-container" id="toast-container"></div>
 
   <script src="js/gerenciamento.js"></script>
+  <script defer src="js/sidebar-hover.js"></script>
 </body>
 </html>

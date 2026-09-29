@@ -1,22 +1,26 @@
 // ============================================================
 // MODAL DE CARREGAMENTO & SUCESSO (ÔMEGA) — utilitários globais
 // Compartilhado entre dashboard.html e tratamento.html.
-//   window.setOmegaProgress(45, 'Processando e enviando para a IA...')
-//   window.showOmegaSuccess('Enviado com Sucesso!', callback)  // fecha em 2s
+//   window.setOmegaProgress(45, 'Carregando dados...')
+//   window.showOmegaSuccess('Dashboard Atualizado!', callback)  // fecha com fade-out
 //   window.closeOmegaLoader()                                  // fecha e reseta
 // ============================================================
 (function () {
   'use strict';
 
-  var OMEGA_LOADER_DEFAULT_STATUS = 'Processando e enviando para a IA...';
+  var OMEGA_LOADER_DEFAULT_STATUS = 'Carregando dados...';
   var omegaSuccessTimer = null;
 
   function omegaEl(id) {
     return document.getElementById(id);
   }
 
+  function getModal() {
+    return omegaEl('omega-loader-modal') || omegaEl('loading-modal');
+  }
+
   window.setOmegaProgress = function (porcentagem, statusText) {
-    var modal = omegaEl('omega-loader-modal');
+    var modal = getModal();
     if (!modal) return;
     var pct = Math.max(0, Math.min(100, Math.round(Number(porcentagem) || 0)));
 
@@ -24,7 +28,10 @@
       clearTimeout(omegaSuccessTimer);
       omegaSuccessTimer = null;
     }
+
+    modal.classList.remove('omega-loader-fadeout');
     modal.hidden = false;
+
     // garante a fase de progresso visível e o sucesso oculto
     var track = omegaEl('omega-progress-track');
     if (track) track.style.display = '';
@@ -32,6 +39,8 @@
     if (pctEl) pctEl.style.display = '';
     var status = omegaEl('omega-status-text');
     if (status) status.style.display = '';
+    var logo = modal.querySelector('.omega-loader-logo');
+    if (logo) logo.style.display = '';
     var su = omegaEl('omega-success-state');
     if (su) su.hidden = true;
 
@@ -44,56 +53,69 @@
   };
 
   window.showOmegaSuccess = function (mensagem, callback) {
-    var modal = omegaEl('omega-loader-modal');
+    var modal = getModal();
     if (!modal) return;
+    modal.classList.remove('omega-loader-fadeout');
     modal.hidden = false;
 
-    // oculta barra, percentual e status
+    // oculta barra, percentual, status e logo temporariamente para focar no checkmark
     var track = omegaEl('omega-progress-track');
     if (track) track.style.display = 'none';
     var pctEl = omegaEl('omega-progress-pct');
     if (pctEl) pctEl.style.display = 'none';
     var status = omegaEl('omega-status-text');
     if (status) status.style.display = 'none';
+    var logo = modal.querySelector('.omega-loader-logo');
+    if (logo) logo.style.display = 'none';
 
     var su = omegaEl('omega-success-state');
     if (su) {
       var txt = su.querySelector('.omega-success-text');
-      if (txt) txt.textContent = mensagem || 'Enviado com Sucesso!';
+      if (txt) txt.textContent = mensagem || 'Dashboard Atualizado!';
       su.hidden = false;
     }
 
     if (omegaSuccessTimer) clearTimeout(omegaSuccessTimer);
     omegaSuccessTimer = setTimeout(function () {
       omegaSuccessTimer = null;
-      window.closeOmegaLoader();
-      if (typeof callback === 'function') callback();
-    }, 2000);
+      window.closeOmegaLoader(callback);
+    }, 1400);
   };
 
-  window.closeOmegaLoader = function () {
+  window.closeOmegaLoader = function (callback) {
     if (omegaSuccessTimer) {
       clearTimeout(omegaSuccessTimer);
       omegaSuccessTimer = null;
     }
-    var modal = omegaEl('omega-loader-modal');
-    if (modal) modal.hidden = true;
+    var modal = getModal();
+    if (!modal) return;
 
-    var track = omegaEl('omega-progress-track');
-    if (track) track.style.display = '';
-    var bar = omegaEl('omega-progress-bar');
-    if (bar) bar.style.width = '0%';
-    var pctEl = omegaEl('omega-progress-pct');
-    if (pctEl) {
-      pctEl.style.display = '';
-      pctEl.textContent = '0%';
-    }
-    var status = omegaEl('omega-status-text');
-    if (status) {
-      status.style.display = '';
-      status.textContent = OMEGA_LOADER_DEFAULT_STATUS;
-    }
-    var su = omegaEl('omega-success-state');
-    if (su) su.hidden = true;
+    // Efeito suave de fade-out antes de ocultar
+    modal.classList.add('omega-loader-fadeout');
+    setTimeout(function () {
+      modal.hidden = true;
+      modal.classList.remove('omega-loader-fadeout');
+
+      var track = omegaEl('omega-progress-track');
+      if (track) track.style.display = '';
+      var bar = omegaEl('omega-progress-bar');
+      if (bar) bar.style.width = '0%';
+      var pctEl = omegaEl('omega-progress-pct');
+      if (pctEl) {
+        pctEl.style.display = '';
+        pctEl.textContent = '0%';
+      }
+      var status = omegaEl('omega-status-text');
+      if (status) {
+        status.style.display = '';
+        status.textContent = OMEGA_LOADER_DEFAULT_STATUS;
+      }
+      var logo = modal.querySelector('.omega-loader-logo');
+      if (logo) logo.style.display = '';
+      var su = omegaEl('omega-success-state');
+      if (su) su.hidden = true;
+
+      if (typeof callback === 'function') callback();
+    }, 300);
   };
 })();

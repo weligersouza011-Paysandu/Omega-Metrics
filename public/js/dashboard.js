@@ -473,7 +473,9 @@
 
     // Modal Ômega: só no carregamento inicial (fora do caminho "background",
     // que atualiza os gráficos a cada clique de filtro sem bloquear a tela).
-    if (!background) window.setOmegaProgress(15, 'Conectando ao banco Neon...');
+    if (!background && typeof window.setOmegaProgress === 'function') {
+      window.setOmegaProgress(15, 'Carregando dados...');
+    }
 
     fetch(url, { signal: ctrl.signal })
       .then(function (res) { return res.json(); })
@@ -484,17 +486,23 @@
           // Período vazio (ou erro): recai no LocalStorage / estado vazio.
           // Clique de filtro mantém a visão anterior (evita "pisca").
           if (!opts.filterChange) tryLocalStorageFallback();
-          if (!background) window.closeOmegaLoader();
+          if (!background && typeof window.closeOmegaLoader === 'function') window.closeOmegaLoader();
           return;
         }
-        if (!background) {
-          window.setOmegaProgress(70, 'Processando indicadores do BI e gráficos...');
+        if (!background && typeof window.setOmegaProgress === 'function') {
+          window.setOmegaProgress(60, 'Sincronizando faltas...');
         }
         showGrid();
         renderDashboard(data, opts);
         if (!background) {
-          window.setOmegaProgress(100, 'Concluído!');
-          window.showOmegaSuccess('Dashboard Atualizado!', window.closeOmegaLoader);
+          if (typeof window.setOmegaProgress === 'function') {
+            window.setOmegaProgress(100, 'Dashboard Atualizado!');
+          }
+          setTimeout(function () {
+            if (typeof window.showOmegaSuccess === 'function') {
+              window.showOmegaSuccess('Dashboard Atualizado!', window.closeOmegaLoader);
+            }
+          }, 320);
         }
       })
       .catch(function (err) {
@@ -503,7 +511,7 @@
         if (gridEl) gridEl.classList.remove('is-refreshing');
         console.warn('Erro ao buscar KPIs do servidor, acionando fallback LocalStorage:', err);
         tryLocalStorageFallback();
-        window.closeOmegaLoader();
+        if (typeof window.closeOmegaLoader === 'function') window.closeOmegaLoader();
       });
   }
 
@@ -717,8 +725,14 @@
     var funcArr = Object.keys(funcMap).map(function (k) {
       var item = funcMap[k];
       item.percentual = item.previstos > 0 ? (item.faltas / item.previstos) * 100 : 0;
+      var pctFormatted = item.percentual.toFixed(2).replace('.', ',');
+      item.rotulo = pctFormatted + '% (' + item.faltas + 'f)';
       return item;
-    }).sort(function (a, b) { return b.percentual - a.percentual || b.faltas - a.faltas; });
+    }).filter(function (item) {
+      return item.faltas > 0;
+    }).sort(function (a, b) {
+      return (b.faltas - a.faltas) || (b.percentual - a.percentual) || a.nome.localeCompare(b.nome);
+    });
 
     var mesArr = Object.keys(mesMap).map(function (k) {
       var item = mesMap[k];
@@ -989,7 +1003,9 @@
     renderCalendario();
 
     // 3. Linha Inferior de Absenteísmo
-    renderRanking(g.absenteismoPorFuncionario || []);
+    // rankingAbsenteismo: array gerado pelo backend (GROUPING SETS por colaborador + filtragem de ativos)
+    // Fallback para absenteismoPorFuncionario (LocalStorage / versão antiga do payload)
+    renderRanking(g.rankingAbsenteismo || g.absenteismoPorFuncionario || []);
     renderAbsenteismoMes(g.absenteismoPorMes || []);
     renderAbsenteismoFuncao(g.absenteismoPorFuncao || []);
 
@@ -1585,12 +1601,13 @@
     top10.forEach(function (item, idx) {
       var nome = escapeHtml(item.nome);
       var selecionado = !!sel && normLocal(item.nome) === sel;
+      var rotuloExibicao = item.rotulo || (pctBr(item.percentual) + ' (' + item.faltas + 'f)');
       html +=
         '<div class="ranking-item' + (selecionado ? ' ranking-item--selected' : '') + '"' +
           ' data-nome="' + nome + '" title="Clique para filtrar o dashboard">' +
           '<span class="ranking-item__pos">#' + (idx + 1) + '</span>' +
           '<span class="ranking-item__name">' + nome + '</span>' +
-          '<span class="ranking-item__val">' + pctBr(item.percentual) + ' (' + item.faltas + 'f)</span>' +
+          '<span class="ranking-item__val">' + rotuloExibicao + '</span>' +
         '</div>';
     });
     html += '</div>';
@@ -1640,12 +1657,13 @@
         var tbody = modal.querySelector('tbody');
         if (tbody) {
           tbody.innerHTML = lastRankingRows.map(function (item, i) {
+            var rotuloExibicao = item.rotulo || (pctBr(item.percentual) + ' (' + item.faltas + 'f)');
             return '<tr>' +
-              '<td>' + (i + 1) + '</td>' +
-              '<td><strong>' + item.nome + '</strong></td>' +
+              '<td>#' + (i + 1) + '</td>' +
+              '<td><strong>' + escapeHtml(item.nome) + '</strong></td>' +
               '<td>' + item.faltas + '</td>' +
               '<td>' + item.previstos + '</td>' +
-              '<td><span class="text-danger fw-bold">' + pctBr(item.percentual) + '</span></td>' +
+              '<td><span class="text-danger fw-bold">' + rotuloExibicao + '</span></td>' +
             '</tr>';
           }).join('');
         }
