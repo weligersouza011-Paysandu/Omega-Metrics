@@ -23,30 +23,42 @@
 </head>
 <body class="rhub-app">
 
-  <!-- ============ A. CABEÇALHO SUPERIOR (TOPBAR) ============ -->
-  <header class="rhub-topbar no-print">
-    <button type="button" class="rhub-topbar__menu" id="btn-menu" title="Menu" aria-label="Abrir menu">
-      <i class="bi bi-list"></i>
-    </button>
-    <div class="rhub-topbar__logo">
-      <img src="assets/logo.png" alt="Omega" onerror="this.style.display='none'">
-      <span>OMEGA SERVICE</span>
-    </div>
-    <div class="rhub-topbar__actions">
-      <span class="rhub-topbar__date" id="data-por-extenso">—</span>
+  <!-- ============ CABEÇALHO SUPERIOR UNIFICADO (ENG-TOPNAV) ============ -->
+  <header class="eng-topnav no-print" data-page="dashboard">
+    <!-- Logo Omega Service -->
+    <a href="dashboard.html" class="eng-topnav__brand">
+      <img src="assets/logo.png" alt="Omega Service" class="eng-topnav__logo-img">
+      <span class="eng-topnav__brand-name">OMEGA <strong>SERVICE</strong></span>
+    </a>
+
+    <!-- Abas de Navegação -->
+    <nav class="eng-topnav__tabs" aria-label="Navegação principal">
+      <a href="dashboard.html"           class="eng-topnav__tab" data-tab="dashboard">
+        <i class="bi bi-speedometer2"></i> <span>Dashboard</span>
+      </a>
+      <a href="tratamento.html"          class="eng-topnav__tab" data-tab="tratamento">
+        <i class="bi bi-cloud-arrow-up"></i> <span>Tratamento</span>
+      </a>
+      <a href="gerenciamento_dados.html" class="eng-topnav__tab" data-tab="gestao">
+        <i class="bi bi-database-down"></i> <span>Gestão de Dados</span>
+      </a>
+    </nav>
+
+    <!-- Ações Direita -->
+    <div class="eng-topnav__actions">
+      <span class="eng-topnav__date" id="data-por-extenso">—</span>
       <button class="btn btn-sm btn-ghost" id="btn-export-pdf" title="Exportar PDF">
         <i class="bi bi-file-earmark-pdf"></i>
         <span>PDF</span>
       </button>
     </div>
   </header>
-
-  <!-- GAVETA LATERAL DO MENU -->
-  <nav class="rhub-drawer no-print" id="menu-drawer" aria-hidden="true">
-    <a href="dashboard.html" class="active"><i class="bi bi-speedometer2"></i> Dashboard</a>
-    <a href="tratamento.html"><i class="bi bi-cloud-arrow-up"></i> Tratamento</a>
-    <a href="gerenciamento_dados.html"><i class="bi bi-database-down"></i> Gestão de Dados</a>
-  </nav>
+  <script>
+    (function(){
+      var tab = document.querySelector('.eng-topnav__tab[data-tab="dashboard"]');
+      if (tab) { tab.classList.add('active'); tab.setAttribute('aria-current','page'); }
+    })();
+  </script>
 
   <!-- ============ A1. HERO BANNER (TÍTULO ESTRITO) ============ -->
   <section class="rhub-hero">
@@ -57,6 +69,7 @@
       </div>
     </div>
   </section>
+
 
   <!-- ============ A2. DIVISOR SEÇÃO ABSENTEÍSMO ============ -->
   <section class="rhub-absent-head" aria-label="Seção Absenteísmo">

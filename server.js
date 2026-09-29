@@ -120,6 +120,7 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/ping', (req, res) => res.status(200).send('pong'));
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
 
 const upload = multer({
   storage: multer.memoryStorage(),

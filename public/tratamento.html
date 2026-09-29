@@ -11,27 +11,39 @@
   <link href="style.css" rel="stylesheet">
 </head>
 <body>
-  <nav class="topbar no-print">
-    <div class="topbar-inner">
-      <div class="topbar-brand">
-        <div class="topbar-logo"><i class="bi bi-graph-up-arrow"></i></div>
-        <div class="topbar-titles">
-          <span class="topbar-brand-name">Omega Metrics</span>
-          <span class="topbar-brand-sub">Módulo de Tratamento de Ponto</span>
-        </div>
-      </div>
-      <div class="topbar-actions">
-        <a href="dashboard.html" class="btn btn-outline no-print">
-          <i class="bi bi-bar-chart"></i>
-          <span>Dashboard</span>
-        </a>
-        <a href="gerenciamento_dados.html" class="btn btn-outline no-print">
-          <i class="bi bi-database-down"></i>
-          <span>Gestão de Dados</span>
-        </a>
-      </div>
+  <!-- ============ CABEÇALHO SUPERIOR UNIFICADO (ENG-TOPNAV) ============ -->
+  <header class="eng-topnav no-print" data-page="tratamento">
+    <!-- Logo Omega Service -->
+    <a href="dashboard.html" class="eng-topnav__brand">
+      <img src="assets/logo.png" alt="Omega Service" class="eng-topnav__logo-img">
+      <span class="eng-topnav__brand-name">OMEGA <strong>SERVICE</strong></span>
+    </a>
+
+    <!-- Abas de Navegação -->
+    <nav class="eng-topnav__tabs" aria-label="Navegação principal">
+      <a href="dashboard.html"           class="eng-topnav__tab" data-tab="dashboard">
+        <i class="bi bi-speedometer2"></i> <span>Dashboard</span>
+      </a>
+      <a href="tratamento.html"          class="eng-topnav__tab" data-tab="tratamento">
+        <i class="bi bi-cloud-arrow-up"></i> <span>Tratamento</span>
+      </a>
+      <a href="gerenciamento_dados.html" class="eng-topnav__tab" data-tab="gestao">
+        <i class="bi bi-database-down"></i> <span>Gestão de Dados</span>
+      </a>
+    </nav>
+
+    <!-- Ações Direita -->
+    <div class="eng-topnav__actions">
+      <span class="eng-topnav__date">Módulo de Importação</span>
     </div>
-  </nav>
+  </header>
+  <script>
+    (function(){
+      var tab = document.querySelector('.eng-topnav__tab[data-tab="tratamento"]');
+      if (tab) { tab.classList.add('active'); tab.setAttribute('aria-current','page'); }
+    })();
+  </script>
+
 
   <main class="main-container">
     <section class="upload-section card">

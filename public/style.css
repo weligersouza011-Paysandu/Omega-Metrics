@@ -3,6 +3,7 @@
    ============================================================ */
 
 :root {
+  /* ── Legado (mantidos para não quebrar componentes existentes) ── */
   --primary: #2563eb;
   --primary-dark: #1d4ed8;
   --primary-light: #3b82f6;
@@ -40,6 +41,34 @@
   --radius: 10px;
   --radius-lg: 16px;
   --transition: 150ms ease;
+
+  /* ── Tema Engenharia & Estrutura (Omega Metrics) ── */
+  --eng-primary:          #7A0C1E;
+  --eng-primary-dark:     #5C0716;
+  --eng-primary-light:    #9B1230;
+  --eng-primary-tint:     rgba(122, 12, 30, 0.08);
+
+  --eng-surface:          #FFFFFF;
+  --eng-bg:               #F8F9FA;
+  --eng-bg-alt:           #F3F4F6;
+
+  --eng-border:           #E5E7EB;
+  --eng-border-strong:    #D1D5DB;
+
+  --eng-text-title:       #111827;
+  --eng-text-body:        #374151;
+  --eng-text-muted:       #6B7280;
+
+  --eng-success:          #16A34A;
+  --eng-warning:          #D97706;
+  --eng-danger:           #DC2626;
+  --eng-info:             #0284C7;
+
+  --eng-radius:           6px;
+  --eng-radius-sm:        4px;
+  --eng-shadow:           0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+  --eng-shadow-md:        0 4px 12px rgba(0,0,0,0.08);
+  --eng-transition:       150ms ease;
 }
 
 *, *::before, *::after {
@@ -918,6 +947,232 @@ a:hover { text-decoration: underline; }
 .rhub-drawer a.active {
   background: rgba(255, 255, 255, 0.1);
   text-decoration: none;
+}
+
+/* ============================================================
+   ENG-TOPNAV — Barra de navegação superior unificada
+   Engenharia & Estrutura · Omega Metrics
+   ============================================================ */
+
+.eng-topnav {
+  display: flex;
+  align-items: stretch;
+  height: 60px;
+  padding: 0 24px;
+  background: var(--eng-surface);
+  border-bottom: 2px solid var(--eng-border);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: var(--eng-shadow);
+  gap: 0;
+}
+
+.eng-topnav__brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  flex-shrink: 0;
+  margin-right: 24px;
+  padding: 0 4px;
+}
+.eng-topnav__brand:hover { text-decoration: none; }
+
+.eng-topnav__logo-img {
+  width: 38px;
+  height: 38px;
+  border-radius: var(--eng-radius);
+  background: var(--eng-primary);
+  object-fit: contain;
+  padding: 5px;
+  flex-shrink: 0;
+}
+
+.eng-topnav__brand-name {
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--eng-text-title);
+  text-transform: uppercase;
+  line-height: 1.2;
+}
+.eng-topnav__brand-name strong {
+  color: var(--eng-primary);
+}
+
+.eng-topnav__tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  flex: 1;
+  list-style: none;
+}
+
+.eng-topnav__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 18px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--eng-text-muted);
+  text-decoration: none;
+  border-bottom: 3px solid transparent;
+  border-top: 3px solid transparent;
+  transition: color var(--eng-transition), border-color var(--eng-transition),
+              background var(--eng-transition);
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+.eng-topnav__tab i { font-size: 0.9rem; }
+.eng-topnav__tab:hover {
+  color: var(--eng-text-title);
+  background: var(--eng-bg-alt);
+  text-decoration: none;
+}
+.eng-topnav__tab.active,
+.eng-topnav__tab[aria-current="page"] {
+  color: var(--eng-primary);
+  border-bottom-color: var(--eng-primary);
+  font-weight: 600;
+  background: var(--eng-primary-tint);
+}
+
+.eng-topnav__actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  padding-left: 16px;
+  border-left: 1px solid var(--eng-border);
+}
+
+.eng-topnav__date {
+  font-size: 0.75rem;
+  color: var(--eng-text-muted);
+  white-space: nowrap;
+  text-transform: capitalize;
+  font-weight: 500;
+}
+
+/* Botão PDF dentro da topnav */
+.eng-topnav .btn-ghost,
+.eng-topnav .eng-btn--ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border: 1px solid var(--eng-border-strong);
+  border-radius: var(--eng-radius);
+  background: transparent;
+  color: var(--eng-text-body);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--eng-transition), border-color var(--eng-transition);
+  text-decoration: none;
+}
+.eng-topnav .btn-ghost:hover,
+.eng-topnav .eng-btn--ghost:hover {
+  background: var(--eng-bg-alt);
+  border-color: var(--eng-primary);
+  color: var(--eng-primary);
+  text-decoration: none;
+}
+
+/* ── Componentes de Engenharia: Tabelas, Badges, Formulários, Modais ── */
+
+.eng-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.eng-table thead th {
+  background: var(--eng-bg-alt);
+  color: var(--eng-text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.72rem;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--eng-border);
+  white-space: nowrap;
+}
+.eng-table tbody tr { border-bottom: 1px solid var(--eng-border); }
+.eng-table tbody tr:nth-child(even) { background: var(--eng-bg); }
+.eng-table tbody tr:hover { background: rgba(122,12,30,0.03); }
+.eng-table tbody td { padding: 8px 12px; color: var(--eng-text-body); }
+
+.eng-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--eng-radius-sm);
+  font-size: 0.68rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+.eng-badge--success { background: #DCFCE7; color: #15803D; }
+.eng-badge--danger  { background: #FEE2E2; color: #B91C1C; }
+.eng-badge--warning { background: #FEF3C7; color: #B45309; }
+.eng-badge--info    { background: #E0F2FE; color: #0369A1; }
+.eng-badge--neutral { background: var(--eng-bg-alt); color: var(--eng-text-muted); }
+
+.eng-upload-zone {
+  border: 2px dashed var(--eng-border-strong);
+  border-radius: var(--eng-radius);
+  background: var(--eng-bg);
+  padding: 40px 24px;
+  text-align: center;
+  transition: border-color var(--eng-transition), background var(--eng-transition);
+  cursor: pointer;
+}
+.eng-upload-zone:hover,
+.eng-upload-zone.drag-over {
+  border-color: var(--eng-primary);
+  background: rgba(122,12,30,0.04);
+}
+.eng-upload-zone__icon { font-size: 2rem; color: var(--eng-text-muted); margin-bottom: 12px; display: block; }
+.eng-upload-zone__label { font-size: 0.9rem; color: var(--eng-text-body); font-weight: 500; }
+.eng-upload-zone__hint  { font-size: 0.78rem; color: var(--eng-text-muted); margin-top: 4px; }
+
+.eng-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.eng-label {
+  display: block; margin-bottom: 4px;
+  font-size: 0.72rem; font-weight: 600;
+  color: var(--eng-text-muted);
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.eng-input {
+  width: 100%; padding: 8px 12px;
+  background: #FAFAFA;
+  border: 1px solid var(--eng-border);
+  border-radius: var(--eng-radius-sm);
+  font-size: 0.875rem; color: var(--eng-text-body);
+  font-family: inherit;
+  transition: border-color var(--eng-transition), box-shadow var(--eng-transition);
+}
+.eng-input:focus {
+  outline: none;
+  border-color: var(--eng-primary);
+  box-shadow: 0 0 0 3px rgba(122,12,30,0.10);
+}
+
+/* Responsividade do eng-topnav */
+@media (max-width: 768px) {
+  .eng-topnav { padding: 0 12px; height: 54px; }
+  .eng-topnav__brand-name { display: none; }
+  .eng-topnav__tab { padding: 0 12px; font-size: 0.78rem; }
+  .eng-topnav__tab span { display: none; }
+  .eng-topnav__tab i { font-size: 1.1rem; margin: 0; }
+  .eng-topnav__date { display: none; }
+}
+@media (max-width: 480px) {
+  .eng-topnav__actions { border-left: none; padding-left: 0; }
+}
+
+/* PDF / Print: ocultar topnav */
+body.pdf-export .eng-topnav,
+@media print {
+  .eng-topnav { display: none !important; }
 }
 
 .rhub-hero {
