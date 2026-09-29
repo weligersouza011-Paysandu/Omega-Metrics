@@ -394,28 +394,37 @@ app.get('/api/dashboard/kpis', async (req, res) => {
       motivo: str(motivo)
     };
 
-    // Todas as consultas ao banco são disparadas em paralelo (Promise.all):
-    //  - getPontoParaTurnover : colunas enxutas (8 vs 18) para pipeline JS
-    //  - getKpisAgregados x4  : CTE com GROUP BY no Postgres (elimina 99% da
-    //                           transferência para os gráficos de absenteísmo)
-    //  - getDesligamentosHistorico + getEfetivoTotal: sem alteração
+    // Dispara apenas as consultas estritamente necessárias em paralelo (Promise.all):
+    //  - getPontoParaTurnover      : agregações mensais por colaborador/cargo no DB (~400 linhas)
+    //  - getDesligamentosHistorico : lista de desligamentos no período
+    //  - getEfetivoTotal           : contagem de colaboradores distintos
+    //  - getKpisAgregados (global) : CTE única no Postgres com GROUPING SETS
+    // Se a dimensão não tiver filtro ativo, reutiliza agGlobal (evita 3 queries repetidas no Postgres).
+    const needsStatusQuery = Boolean(cross.status);
+    const needsDiaQuery    = Boolean(cross.dia);
+    const needsMesQuery    = Boolean(cross.mes);
+
     const [
       pontoRows,
       desligRows,
       efetivoTotalPeriodo,
-      agGlobal,       // skip=null  → KPI velocímetro (todos os filtros)
-      agStatus,       // skip=status → rosca de justificativas
-      agDia,          // skip=dia    → calendário
-      agMes           // skip=mes    → gráfico % Absenteísmo Mês
+      agGlobal,
+      agStatusOpt,
+      agDiaOpt,
+      agMesOpt
     ] = await Promise.all([
       getPontoParaTurnover(dataInicio, dataFim),
       getDesligamentosHistorico(dataInicio, dataFim),
       getEfetivoTotal(dataInicio, dataFim),
       getKpisAgregados(dataInicio, dataFim, cross, null),
-      getKpisAgregados(dataInicio, dataFim, cross, 'status'),
-      getKpisAgregados(dataInicio, dataFim, cross, 'dia'),
-      getKpisAgregados(dataInicio, dataFim, cross, 'mes')
+      needsStatusQuery ? getKpisAgregados(dataInicio, dataFim, cross, 'status') : Promise.resolve(null),
+      needsDiaQuery    ? getKpisAgregados(dataInicio, dataFim, cross, 'dia')    : Promise.resolve(null),
+      needsMesQuery    ? getKpisAgregados(dataInicio, dataFim, cross, 'mes')    : Promise.resolve(null)
     ]);
+
+    const agStatus = agStatusOpt || agGlobal;
+    const agDia    = agDiaOpt    || agGlobal;
+    const agMes    = agMesOpt    || agGlobal;
 
     // Analisa os resultados do GROUPING SETS
     const sqlGlobal = parseAgregados(agGlobal);

@@ -81,7 +81,6 @@
   var rangeInicio = document.getElementById('range-inicio');
   var rangeFim = document.getElementById('range-fim');
   var slider = document.getElementById('slider-periodo');
-  var drawer = document.getElementById('menu-drawer');
 
   // Inicialização principal
   document.addEventListener('DOMContentLoaded', init);
@@ -141,15 +140,20 @@
 
   function setupDrawer() {
     var btn = document.getElementById('btn-menu');
+    var drawer = document.getElementById('menu-drawer');
     if (!btn || !drawer) return;
+
     btn.addEventListener('click', function (e) {
       e.stopPropagation();
-      drawer.classList.toggle('open');
-      drawer.setAttribute('aria-hidden', drawer.classList.contains('open') ? 'false' : 'true');
+      var isOpen = drawer.classList.toggle('open');
+      drawer.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
     });
+
     document.addEventListener('click', function (e) {
-      if (drawer.classList.contains('open') && !drawer.contains(e.target)) {
-        drawer.classList.remove('open');
+      var currentDrawer = document.getElementById('menu-drawer');
+      if (currentDrawer && currentDrawer.classList.contains('open') && !currentDrawer.contains(e.target) && !e.target.closest('#btn-menu')) {
+        currentDrawer.classList.remove('open');
+        currentDrawer.setAttribute('aria-hidden', 'true');
       }
     });
   }
