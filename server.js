@@ -41,6 +41,7 @@ function parseAgregados(rows) {
   const porStatus = [];
   const porDia    = [];
   const porMes    = [];
+  const porFuncionarioCargo = [];
 
   for (const r of (rows || [])) {
     const faltas    = Number(r.total_faltas)    || 0;
@@ -83,15 +84,24 @@ function parseAgregados(rows) {
         });
       }
     }
-    // GROUPING SETs (cargo) e (nome_funcionario): usados pelo pipeline JS
-    // para ranking e absenteísmo por função — ignorados aqui.
+    // GROUPING SET (nome_funcionario, cargo) → Ranking e Absenteísmo por Função
+    else if (hasNome && !hasStatus && !hasData && !hasMes) {
+      if (previstos > 0) {
+        porFuncionarioCargo.push({
+          nome: r.nome_funcionario,
+          funcao: r.cargo,
+          faltas,
+          previstos
+        });
+      }
+    }
   }
 
   porStatus.sort((a, b) => b.value - a.value);
   porDia.sort((a, b) => a.data.localeCompare(b.data));
   porMes.sort((a, b) => a.chave.localeCompare(b.chave));
 
-  return { global, porStatus, porDia, porMes };
+  return { global, porStatus, porDia, porMes, porFuncionarioCargo };
 }
 
 const app = express();
@@ -473,6 +483,42 @@ app.get('/api/dashboard/kpis', async (req, res) => {
     graficos.absenteismoPorStatus = sqlStatus.porStatus;  // rosca (skip=status)
     graficos.absenteismoPorDia    = sqlDia.porDia;        // calendário (skip=dia)
     graficos.absenteismoPorMes    = sqlMes.porMes;        // gráfico mês (skip=mes)
+
+    // Ranking e Gráfico por Função (filtrando demitidos/desligados)
+    const demitidosUpper = new Set(desligData.map(d => String(d.nome || '').trim().toUpperCase()));
+    const ativosFuncCargo = sqlGlobal.porFuncionarioCargo.filter(
+      r => !demitidosUpper.has(String(r.nome || '').trim().toUpperCase())
+    );
+
+    graficos.rankingAbsenteismo = ativosFuncCargo
+      .map(r => ({
+        nome: r.nome,
+        funcao: r.funcao,
+        faltas: r.faltas,
+        previstos: r.previstos,
+        percentual: r.previstos > 0 ? parseFloat(((r.faltas / r.previstos) * 100).toFixed(2)) : 0
+      }))
+      .filter(r => r.percentual > 0)
+      .sort((a, b) => b.percentual - a.percentual || a.nome.localeCompare(b.nome))
+      .slice(0, 10);
+
+    const funcaoMap = {};
+    for (const r of ativosFuncCargo) {
+      const f = r.funcao || 'NÃO INFORMADA';
+      if (!funcaoMap[f]) funcaoMap[f] = { faltas: 0, previstos: 0 };
+      funcaoMap[f].faltas += r.faltas;
+      funcaoMap[f].previstos += r.previstos;
+    }
+    graficos.absenteismoPorFuncao = Object.keys(funcaoMap)
+      .map(f => {
+        const { faltas, previstos } = funcaoMap[f];
+        return {
+          label: f,
+          value: previstos > 0 ? parseFloat(((faltas / previstos) * 100).toFixed(2)) : 0
+        };
+      })
+      .filter(f => f.value > 0)
+      .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
 
     // KPI de velocímetro: substitui percentual e totais brutos pelo valor SQL.
     // Preserva `excluidos` e `detalhamento` calculados pelo JS (não disponíveis no SQL).

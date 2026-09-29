@@ -495,8 +495,7 @@ async function getKpisAgregados(dataInicio, dataFim, filtros, skip) {
       (status_raw),                                -- por status
       (data_registro),                             -- por dia
       (mes),                                       -- por mes
-      (cargo),                                     -- por funcao
-      (nome_funcionario)                           -- por funcionario
+      (nome_funcionario, cargo)                    -- por funcionario com funcao (serve p/ ranking e funcao)
     )
     ORDER BY data_registro NULLS LAST, mes NULLS LAST, cargo NULLS LAST, nome_funcionario NULLS LAST
   `;
