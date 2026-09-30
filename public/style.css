@@ -1627,6 +1627,10 @@ body.pdf-export .eng-topnav,
 .cal-day--vermelho { background: #fee2e2; color: #991b1b; }
 .cal-day--neutro { background: var(--gray-100); color: var(--gray-400); }
 
+/* Bordas destacadas para dias não-úteis no Dashboard */
+.cal-day--border-feriado { box-shadow: inset 0 0 0 2.5px #2563eb !important; border-radius: 4px; }
+.cal-day--border-compensado { box-shadow: inset 0 0 0 2.5px #d97706 !important; border-radius: 4px; }
+
 .cal-day--has-data {
   cursor: pointer;
   transition: transform 0.1s;

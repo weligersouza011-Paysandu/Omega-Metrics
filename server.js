@@ -17,7 +17,8 @@ const { initDatabase, createLote, getLote, confirmLote,
   upsertPontoHistorico, insertDesligamentosJustificados, updateCalendario,
   getPontoHistorico, getPontoParaTurnover, getKpisAgregados,
   getDesligamentosHistorico, getCalendarioDatas,
-  getPeriodoLimites, getEfetivoTotal,
+  getCalendarioOperacional, upsertDiaOperacional, gerarCalendarioAno,
+  getPeriodoLimites, getEfetivoTotal, getTipoDiasPorPeriodo,
   countByDate, getByDate, deleteByDate, formatHorarioValue } = require('./src/database/dbService');
 
 const { parseExcelFiles, validateData, validatePontoRow, applyCorrecoes, toPontoDataShape, toDesligDataShape, calculateMetrics, formatExcelDate, excelDecimalToTime, STATUS_CONFIG, STATUS_ALIASES, getStatusMeta, calcularAbsenteismo, calcEfetivoAtivoPorMes, calcTurnoverMensal, calcTurnoverPorFuncao, applyCrossFilters, applyCrossFiltersDeslig, temFiltro, META_TURNOVER_GERAL, META_TURNOVER_OPERACIONAL, MOTIVOS_TURNOVER_RELEVANTES } = require('./src/services/tratamentoService');
@@ -496,8 +497,25 @@ app.get('/api/dashboard/kpis', async (req, res) => {
     // ranking e gráfico por função (que precisam de filtrarAtivos sobre linhas).
     // Os componentes abaixo são equivalentes mas vêm do banco pré-agrupado:
     graficos.absenteismoPorStatus = sqlStatus.porStatus;  // rosca (skip=status)
-    graficos.absenteismoPorDia    = sqlDia.porDia;        // calendário (skip=dia)
     graficos.absenteismoPorMes    = sqlMes.porMes;        // gráfico mês (skip=mes)
+
+    // Calendário (skip=dia): precisa de todos os dias do período com seus tipo_dia
+    const tiposPeriodo = await getTipoDiasPorPeriodo(dataInicio, dataFim);
+    const tiposMap = new Map(tiposPeriodo.map(t => [t.data, t.tipo_dia]));
+    const sqlDiaMap = new Map(sqlDia.porDia.map(d => [d.data, d]));
+
+    const diasCompletos = [];
+    const begin = new Date(dataInicio);
+    const end = new Date(dataFim);
+    for (let d = new Date(begin); d <= end; d = new Date(d.getTime() + 86400000)) {
+      const iso = d.toISOString().slice(0, 10);
+      const rowData = sqlDiaMap.get(iso) || { data: iso, faltas: 0, previstos: 0, percentual: 0 };
+      diasCompletos.push({
+        ...rowData,
+        tipo_dia: tiposMap.get(iso) || 'UTIL'
+      });
+    }
+    graficos.absenteismoPorDia = diasCompletos;
 
     // Ranking e Gráfico por Função (FILTRAGEM RIGOROSA DE COLABORADORES ATIVOS)
     const desligados = [...(todosDesligRows || []), ...(desligRows || []), ...(desligData || [])];
@@ -724,6 +742,96 @@ app.delete('/api/dados/deletar', async (req, res) => {
     return res.json({ success: true, data, removidos: result });
   } catch (err) {
     return res.status(err.statusCode || 500).json({ success: false, error: err.message });
+  }
+});
+
+/* ============================================================
+   CALENDÁRIO OPERACIONAL
+   ============================================================ */
+
+/**
+ * GET /api/calendario-operacional?mes=9&ano=2026
+ * Retorna os dias marcados como não-úteis no mês/ano informados.
+ */
+app.get('/api/calendario-operacional', async (req, res) => {
+  try {
+    const mes = parseInt(req.query.mes, 10);
+    const ano = parseInt(req.query.ano, 10);
+    if (!mes || !ano || mes < 1 || mes > 12 || ano < 2000 || ano > 2100) {
+      return res.status(400).json({ success: false, error: 'Parâmetros mes (1-12) e ano (2000-2100) são obrigatórios.' });
+    }
+    const dias = await getCalendarioOperacional(mes, ano);
+    return res.json({ success: true, mes, ano, dias });
+  } catch (err) {
+    console.error('Erro ao buscar calendário operacional:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/calendario-operacional
+ * Body: { data: 'YYYY-MM-DD', tipo_dia: 'UTIL'|'FERIADO'|'COMPENSADO', descricao?: string }
+ * Invalida o cache de KPIs para refletir imediatamente no dashboard.
+ */
+app.post('/api/calendario-operacional', async (req, res) => {
+  try {
+    const { data, tipo_dia, descricao } = req.body;
+    if (!data || !tipo_dia) {
+      return res.status(400).json({ success: false, error: 'Campos data e tipo_dia são obrigatórios.' });
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) {
+      return res.status(400).json({ success: false, error: 'Campo data deve estar no formato YYYY-MM-DD.' });
+    }
+    const result = await upsertDiaOperacional(data, tipo_dia, descricao);
+    kpiCache.flushAll(); // invalida cache para refletir nos KPIs imediatamente
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/calendario-operacional/ano?ano=2026
+ * Retorna TODOS os dias do ano informado (usado pela visão anual de 12 meses).
+ */
+app.get('/api/calendario-operacional/ano', async (req, res) => {
+  try {
+    const ano = parseInt(req.query.ano, 10);
+    if (!ano || ano < 2000 || ano > 2100) {
+      return res.status(400).json({ success: false, error: 'Parâmetro ano (2000-2100) é obrigatório.' });
+    }
+    const promessas = [];
+    for (let m = 1; m <= 12; m++) promessas.push(getCalendarioOperacional(m, ano));
+    const resultados = await Promise.all(promessas);
+    const dias = resultados.flat();
+    return res.json({ success: true, ano, dias });
+  } catch (err) {
+    console.error('Erro ao buscar calendário anual:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/calendario-operacional/gerar-ano
+ * Body: { ano: 2026, sobrescrever?: false }
+ * Preenche o ano inteiro com a classificação padrão (S/D=COMPENSADO, Feriados=FERIADO, resto=UTIL).
+ * sobrescrever=false (padrão): respeita ajustes manuais existentes.
+ * sobrescrever=true: reescreve tudo.
+ */
+app.post('/api/calendario-operacional/gerar-ano', async (req, res) => {
+  try {
+    const ano = parseInt(req.body.ano, 10);
+    const sobrescrever = req.body.sobrescrever === true || req.body.sobrescrever === 'true';
+    if (!ano || ano < 2000 || ano > 2100) {
+      return res.status(400).json({ success: false, error: 'Campo ano (2000-2100) é obrigatório.' });
+    }
+    const result = await gerarCalendarioAno(ano, sobrescrever);
+    kpiCache.flushAll();
+    console.log(`[CALENDÁRIO] Ano ${ano} gerado: ${result.inseridos} inseridos, ${result.pulados} pulados.`);
+    return res.json({ success: true, ano, ...result });
+  } catch (err) {
+    console.error('Erro ao gerar calendário do ano:', err);
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 

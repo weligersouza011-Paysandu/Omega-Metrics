@@ -52,6 +52,12 @@
             <span>Gestão de Usuários</span>
           </a>
         </li>
+        <li>
+          <a href="calendario_operacional.html" class="eng-sidebar__link sidebar-hover-menu__link" data-sidebar-page="calendario">
+            <i class="bi bi-calendar3"></i>
+            <span>Calendário Operacional</span>
+          </a>
+        </li>
       </ul>
     </nav>
 
@@ -83,6 +89,9 @@
       </a>
       <a href="gerenciamento_dados.html" class="eng-topnav__tab" data-tab="gestao">
         <i class="bi bi-database-down"></i> <span>Gestão de Dados</span>
+      </a>
+      <a href="calendario_operacional.html" class="eng-topnav__tab" data-tab="calendario">
+        <i class="bi bi-calendar3"></i> <span>Calendário Operacional</span>
       </a>
     </nav>
 
@@ -218,10 +227,10 @@
           <div class="rhub-cal-body">
             <div class="rhub-cal-grid" id="calendario"></div>
             <div class="rhub-cal-legend">
-              <span><span class="dot dot--verde"></span>Abaixo da meta (&lt; 3,00%)</span>
-              <span><span class="dot dot--amarelo"></span>Atenção (3,00% – 4,00%)</span>
-              <span><span class="dot dot--vermelho"></span>Acima do limite (&gt; 4,00%)</span>
-              <span><span class="dot dot--neutro"></span>Sem expediente / sem dados</span>
+              <span><span class="dot dot--verde"></span> / <span class="dot dot--vermelho"></span> = Taxa de Absenteísmo (ok / limite)</span>
+              <span><span class="dot" style="border: 2px solid #2563eb; background: transparent;"></span>Feriado</span>
+              <span><span class="dot" style="border: 2px solid #d97706; background: transparent;"></span>Compensado / Ponte</span>
+              <span><span class="dot dot--neutro"></span>Sem dados</span>
               <span class="text-muted"><i class="bi bi-hand-index-thumb"></i> Clique em um dia para filtrar</span>
             </div>
           </div>

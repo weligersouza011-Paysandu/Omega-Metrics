@@ -97,6 +97,12 @@ async function createSchema() {
       registros_ponto INTEGER DEFAULT 0,
       desligamentos INTEGER DEFAULT 0
     );
+
+    CREATE TABLE IF NOT EXISTS calendario_operacional (
+      data DATE PRIMARY KEY,
+      tipo_dia VARCHAR(20) NOT NULL DEFAULT 'UTIL',
+      descricao VARCHAR(100)
+    );
   `);
   await pool.query('ALTER TABLE ponto_historico ADD COLUMN IF NOT EXISTS cid TEXT');
 }
@@ -455,23 +461,29 @@ async function getKpisAgregados(dataInicio, dataFim, filtros, skip) {
 
   const extraWhere = whereClauses.length ? 'AND ' + whereClauses.join(' AND ') : '';
 
+  // Parâmetros extras para o LEFT JOIN com calendario_operacional
+  // (não há parâmetros adicionais — o filtro usa COALESCE inline)
+
   const sql = `
     WITH base AS (
       SELECT
-        data_registro,
-        LEFT(data_registro, 7)               AS mes,
-        chave_funcionario,
-        COALESCE(TRIM(nome_funcionario), '') AS nome_funcionario,
-        COALESCE(TRIM(cargo), '')            AS cargo,
-        COALESCE(TRIM(status), '')           AS status_raw,
+        ph.data_registro,
+        LEFT(ph.data_registro, 7)               AS mes,
+        ph.chave_funcionario,
+        COALESCE(TRIM(ph.nome_funcionario), '') AS nome_funcionario,
+        COALESCE(TRIM(ph.cargo), '')            AS cargo,
+        COALESCE(TRIM(ph.status), '')           AS status_raw,
         CASE
-          WHEN UPPER(TRIM(status)) = ANY(${ addParam(FALTAS) }::text[])    THEN 'falta'
-          WHEN UPPER(TRIM(status)) = ANY(${ addParam(PRESENCAS) }::text[]) THEN 'presenca'
-          WHEN UPPER(TRIM(status)) = ANY(${ addParam(EXCLUIDOS) }::text[]) THEN 'excluido'
+          WHEN UPPER(TRIM(ph.status)) = ANY(${ addParam(FALTAS) }::text[])    THEN 'falta'
+          WHEN UPPER(TRIM(ph.status)) = ANY(${ addParam(PRESENCAS) }::text[]) THEN 'presenca'
+          WHEN UPPER(TRIM(ph.status)) = ANY(${ addParam(EXCLUIDOS) }::text[]) THEN 'excluido'
           ELSE 'desconhecido'
         END AS classe
-      FROM ponto_historico
-      WHERE data_registro BETWEEN $1 AND $2
+      FROM ponto_historico ph
+      LEFT JOIN calendario_operacional cal
+        ON cal.data = ph.data_registro::date
+      WHERE ph.data_registro BETWEEN $1 AND $2
+        AND COALESCE(cal.tipo_dia, 'UTIL') = 'UTIL'
         ${extraWhere}
     ),
     contaveis AS (
@@ -540,6 +552,173 @@ async function getCalendarioDatas() {
     ORDER BY data
   `);
   return result.rows;
+}
+
+/**
+ * getTipoDiasPorPeriodo — retorna o tipo_dia (UTIL/FERIADO/COMPENSADO) de
+ * cada data registrada em calendario_operacional dentro do período.
+ * Usado pelo servidor para enriquecer absenteismoPorDia com o campo tipo_dia,
+ * permitindo destacar bordas de feriados/compensados no calendário do dashboard.
+ * @param {string} dataInicio - 'YYYY-MM-DD'
+ * @param {string} dataFim    - 'YYYY-MM-DD'
+ * @returns {Array<{ data: string, tipo_dia: string, descricao: string }>}
+ */
+async function getTipoDiasPorPeriodo(dataInicio, dataFim) {
+  const result = await pool.query(`
+    SELECT data::text AS data, tipo_dia, descricao
+    FROM calendario_operacional
+    WHERE data BETWEEN $1::date AND $2::date
+    ORDER BY data
+  `, [dataInicio, dataFim]);
+  return result.rows;
+}
+
+/**
+ * getCalendarioOperacional — retorna todos os dias do mês/ano informados
+ * que possuam registro na tabela calendario_operacional.
+ * @param {number} mes  - 1..12
+ * @param {number} ano  - ex. 2026
+ */
+async function getCalendarioOperacional(mes, ano) {
+  const dataInicio = `${ano}-${String(mes).padStart(2, '0')}-01`;
+  const dataFim    = `${ano}-${String(mes).padStart(2, '0')}-31`; // PostgreSQL corta no último dia do mês
+  const result = await pool.query(`
+    SELECT data::text AS data, tipo_dia, descricao
+    FROM calendario_operacional
+    WHERE data BETWEEN $1::date AND ($1::date + INTERVAL '1 month - 1 day')::date
+    ORDER BY data
+  `, [dataInicio]);
+  return result.rows;
+}
+
+/**
+ * upsertDiaOperacional — insere ou atualiza o tipo do dia no calendário operacional.
+ * @param {string} data      - 'YYYY-MM-DD'
+ * @param {string} tipo_dia  - 'UTIL' | 'FERIADO' | 'COMPENSADO'
+ * @param {string} descricao - opcional
+ */
+async function upsertDiaOperacional(data, tipo_dia, descricao) {
+  const tiposValidos = ['UTIL', 'FERIADO', 'COMPENSADO'];
+  if (!tiposValidos.includes(tipo_dia)) {
+    const err = new Error(`tipo_dia inválido: ${tipo_dia}. Use: UTIL, FERIADO ou COMPENSADO.`);
+    err.statusCode = 400;
+    throw err;
+  }
+  await pool.query(`
+    INSERT INTO calendario_operacional (data, tipo_dia, descricao)
+    VALUES ($1::date, $2, $3)
+    ON CONFLICT (data) DO UPDATE SET
+      tipo_dia  = excluded.tipo_dia,
+      descricao = excluded.descricao
+  `, [data, tipo_dia, descricao || null]);
+  return { data, tipo_dia, descricao: descricao || null };
+}
+
+/**
+ * calcularPascoa(ano) — algoritmo de Gauss para Páscoa ocidental.
+ * Retorna um objeto Date (UTC) com a data da Páscoa.
+ */
+function calcularPascoa(ano) {
+  const a = ano % 19;
+  const b = Math.floor(ano / 100);
+  const c = ano % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const mes = Math.floor((h + l - 7 * m + 114) / 31);   // 1-indexado
+  const dia = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(Date.UTC(ano, mes - 1, dia));
+}
+
+/**
+ * feriadosNacionaisBrasil(ano) — retorna um Map<'YYYY-MM-DD', string>
+ * com todos os feriados nacionais fixos + móveis do ano.
+ */
+function feriadosNacionaisBrasil(ano) {
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  const add = (d, dias) => new Date(d.getTime() + dias * 86400000);
+  const f   = new Map();
+
+  // Fixos
+  f.set(`${ano}-01-01`, 'Confraternização Universal');
+  f.set(`${ano}-04-21`, 'Tiradentes');
+  f.set(`${ano}-05-01`, 'Dia do Trabalho');
+  f.set(`${ano}-09-07`, 'Independência do Brasil');
+  f.set(`${ano}-10-12`, 'N. Sra. Aparecida');
+  f.set(`${ano}-11-02`, 'Finados');
+  f.set(`${ano}-11-15`, 'Proclamação da República');
+  f.set(`${ano}-11-20`, 'Consciência Negra');
+  f.set(`${ano}-12-25`, 'Natal');
+
+  // Móveis baseados na Páscoa
+  const pascoa = calcularPascoa(ano);
+  f.set(fmt(add(pascoa, -48)), 'Carnaval (segunda)');        // 48 dias antes
+  f.set(fmt(add(pascoa, -47)), 'Carnaval (terça)');          // 47 dias antes
+  f.set(fmt(add(pascoa,  -2)), 'Paixão de Cristo');
+  f.set(fmt(pascoa),           'Páscoa');
+  f.set(fmt(add(pascoa,  60)), 'Corpus Christi');
+
+  return f;
+}
+
+/**
+ * gerarCalendarioAno(ano) — preenche a tabela calendario_operacional com
+ * todos os dias do ano usando a classificação padrão:
+ *   - Sábado/Domingo  → COMPENSADO
+ *   - Feriado nacional → FERIADO
+ *   - Segunda–Sexta   → UTIL
+ *
+ * Usa ON CONFLICT DO NOTHING para não sobrescrever ajustes manuais.
+ * Retorna { inseridos, pulados }.
+ */
+async function gerarCalendarioAno(ano, sobrescrever = false) {
+  const feriados = feriadosNacionaisBrasil(ano);
+  const registros = [];
+
+  const inicio = new Date(Date.UTC(ano, 0, 1));
+  const fim    = new Date(Date.UTC(ano, 11, 31));
+
+  for (let d = new Date(inicio); d <= fim; d = new Date(d.getTime() + 86400000)) {
+    const dataStr  = d.toISOString().slice(0, 10);
+    const diaSem   = d.getUTCDay(); // 0=Dom, 6=Sab
+    let   tipo_dia, descricao;
+
+    if (feriados.has(dataStr)) {
+      tipo_dia  = 'FERIADO';
+      descricao = feriados.get(dataStr);
+    } else if (diaSem === 0 || diaSem === 6) {
+      tipo_dia  = 'COMPENSADO';
+      descricao = diaSem === 0 ? 'Domingo' : 'Sábado';
+    } else {
+      tipo_dia  = 'UTIL';
+      descricao = null;
+    }
+    registros.push([dataStr, tipo_dia, descricao]);
+  }
+
+  const conflictClause = sobrescrever
+    ? 'DO UPDATE SET tipo_dia = excluded.tipo_dia, descricao = excluded.descricao'
+    : 'DO NOTHING';
+
+  return withTransaction(async (client) => {
+    let inseridos = 0, pulados = 0;
+    for (const [data, tipo_dia, descricao] of registros) {
+      const r = await client.query(
+        `INSERT INTO calendario_operacional (data, tipo_dia, descricao)
+         VALUES ($1::date, $2, $3)
+         ON CONFLICT (data) ${conflictClause}`,
+        [data, tipo_dia, descricao]
+      );
+      if (r.rowCount > 0) inseridos++; else pulados++;
+    }
+    return { inseridos, pulados, total: registros.length };
+  });
 }
 
 function isValidDate(data) {
@@ -648,7 +827,11 @@ module.exports = {
   getKpisAgregados,
   getDesligamentosHistorico,
   getCalendarioDatas,
+  getCalendarioOperacional,
+  upsertDiaOperacional,
+  gerarCalendarioAno,
   getPeriodoLimites,
+  getTipoDiasPorPeriodo,
   countByDate,
   getByDate,
   deleteByDate,

@@ -1379,8 +1379,17 @@
 
     el.classList.remove(
       'cal-day--has-data', 'cal-day--verde', 'cal-day--amarelo',
-      'cal-day--vermelho', 'cal-day--neutro', 'cal-day--selected'
+      'cal-day--vermelho', 'cal-day--neutro', 'cal-day--selected',
+      'cal-day--border-feriado', 'cal-day--border-compensado'
     );
+
+    if (reg) {
+      if (reg.tipo_dia === 'FERIADO') {
+        el.classList.add('cal-day--border-feriado');
+      } else if (reg.tipo_dia === 'COMPENSADO' || reg.tipo_dia === 'FOLGA') {
+        el.classList.add('cal-day--border-compensado');
+      }
+    }
 
     if (reg && reg.previstos > 0) {
       var pct = reg.percentual;
@@ -1388,11 +1397,23 @@
       if (pct <= META_ABSENTEISMO) el.classList.add('cal-day--verde');
       else if (pct <= LIMITE_ALERTA) el.classList.add('cal-day--amarelo');
       else el.classList.add('cal-day--vermelho');
-      el.title = 'Data: ' + iso + ' | Absenteísmo: ' + pctBr(pct) +
-        ' (' + reg.faltas + '/' + reg.previstos + ')';
+
+      var extraDesc = '';
+      if (reg.tipo_dia && reg.tipo_dia !== 'UTIL') {
+        var tipoLabel = reg.tipo_dia === 'FERIADO' ? 'Feriado' : 'Compensado';
+        extraDesc = ' (' + tipoLabel + ' - Escala Extra)';
+      }
+
+      var dFormat = iso.split('-').reverse().slice(0, 2).join('/');
+      el.title = dFormat + extraDesc + ': ' + reg.faltas + ' faltas de ' + reg.previstos + ' previstos (' + pctBr(pct) + '%)';
     } else {
       el.classList.add('cal-day--neutro');
-      el.title = '';
+      if (reg && reg.tipo_dia && reg.tipo_dia !== 'UTIL') {
+        var dFormat = iso.split('-').reverse().slice(0, 2).join('/');
+        el.title = dFormat + ' (' + (reg.tipo_dia === 'FERIADO' ? 'Feriado' : 'Compensado') + ')';
+      } else {
+        el.title = '';
+      }
     }
 
     if (globalFilter.dia === iso) el.classList.add('cal-day--selected');
