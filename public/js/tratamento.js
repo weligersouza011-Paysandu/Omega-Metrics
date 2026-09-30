@@ -82,7 +82,6 @@
   };
 
   var RE_DEMISSAO = /DEMITID[OA]S?|DEMISS(OES|AO)|DESLIGAD[OA]S?|RESCIS(OES|AO)/;
-  var RE_ADMITIDO = /ADMITID[OA]S?|ADMISS(OES|AO)|ENTRADA\s*DE|NOVO\s*COLABOR|PRIMEIRO\s*DIA|INTEGRA(CAO|\u00c7\u00c3O)|CONTRATA(DO|DOS)/;
 
   function normalizeStatusKey(s) {
     return String(s || '')
@@ -506,7 +505,6 @@
     renderInconsistencias();
     renderDemissoes(demissoesPendentes);
     renderAbsenteismoKpi();
-    renderAdmitidos();
     updateSendButton();
   }
 
@@ -521,75 +519,7 @@
     el.className = 'badge ' + (abs.percentual > 0 ? 'badge-danger' : 'badge-success');
   }
 
-  /**
-   * detectarAdmitidos() — varre dadosProcessados buscando matrículas/nomes
-   * que só aparecem no lote com indicadores de primeiro registro:
-   *  1. Status/motivo bate com RE_ADMITIDO, OU
-   *  2. Matrícula nunca vista antes neste lote (possível novo ingresso)
-   *     e aparece apenas num único dia (1º dia de trabalho).
-   * Retorna array dedupado por matrícula com o 1º registro de cada um.
-   */
-  function detectarAdmitidos() {
-    var porMatricula = {};
-    dadosProcessados.forEach(function (r) {
-      var mat = String(r.matricula || '').trim();
-      var statusNorm = normalizeStatusKey(r.status);
-      var isAdmitidoByStatus = RE_ADMITIDO.test(statusNorm);
 
-      if (!mat) return;
-      if (!porMatricula[mat]) {
-        porMatricula[mat] = { rows: [], admitidoByStatus: false };
-      }
-      porMatricula[mat].rows.push(r);
-      if (isAdmitidoByStatus) porMatricula[mat].admitidoByStatus = true;
-    });
-
-    var admitidos = [];
-    Object.keys(porMatricula).forEach(function (mat) {
-      var info = porMatricula[mat];
-      // Critério 1: status explícito de admissão
-      if (info.admitidoByStatus) {
-        var primeiro = info.rows[0];
-        admitidos.push(primeiro);
-        return;
-      }
-      // Critério 2: aparece apenas em 1 dia E não é demição
-      if (info.rows.length === 1) {
-        var r = info.rows[0];
-        var meta = getStatusMeta(r.status);
-        if (meta.grupo !== 'DEMISSAO') {
-          admitidos.push(r);
-        }
-      }
-    });
-    return admitidos;
-  }
-
-  function renderAdmitidos() {
-    var section = document.getElementById('admitidos-section');
-    var badge = document.getElementById('badge-admitidos');
-    var tbody = document.getElementById('admitidos-tbody');
-    if (!section || !tbody) return;
-
-    var lista = detectarAdmitidos();
-    if (lista.length === 0) {
-      section.style.display = 'none';
-      return;
-    }
-
-    section.style.display = 'block';
-    badge.textContent = lista.length + (lista.length === 1 ? ' colaborador' : ' colaboradores');
-
-    tbody.innerHTML = lista.map(function (r) {
-      return '<tr class="row-admitido">' +
-        '<td><strong>' + esc(r.matricula || '—') + '</strong></td>' +
-        '<td>' + esc(r.funcionario || '—') + '</td>' +
-        '<td>' + esc(r.funcao || '—') + '</td>' +
-        '<td>' + esc(formatExcelDate(r.dia) || '—') + '</td>' +
-        '<td><span class="badge badge-admitido">Admitido</span></td>' +
-        '</tr>';
-    }).join('');
-  }
 
   function renderPreview() {
     document.getElementById('badge-total-registros').textContent =
@@ -610,12 +540,74 @@
         '<td>' + esc(r.funcionario) + '</td>' +
         '<td>' + esc(r.funcao || '—') + '</td>' +
         '<td>' + esc(formatExcelDate(r.dia) || '—') + '</td>' +
-        '<td>' + renderStatusBadge(r.status, r.cid) + '</td>' +
+        '<td>' + renderStatusSelect(r.status, r.rowIndex, r.cid) + '</td>' +
         '<td>' + esc(formatTimeValue(r.entrada1)) + '</td>' +
         '<td>' + esc(formatTimeValue(r.saida2)) + '</td>' +
         '<td>' + formatHoursToHHMM(r.totalNormais) + '</td>' +
         '</tr>';
     }).join('');
+
+    // Adiciona listener para os selects de status (Event Delegation)
+    if (!tbody.dataset.boundStatusSelect) {
+      tbody.dataset.boundStatusSelect = 'true';
+      tbody.addEventListener('change', function(e) {
+        if (e.target.classList.contains('select-status-preview')) {
+          var rowIndex = parseInt(e.target.getAttribute('data-row-index'), 10);
+          var novoStatus = e.target.value;
+          
+          if (!isNaN(rowIndex) && dadosProcessados[rowIndex]) {
+            dadosProcessados[rowIndex].status = novoStatus;
+            dadosProcessados[rowIndex].corrigido = true;
+            
+            // Adiciona a classe de correção na linha correspondente (para feedback visual)
+            var tr = e.target.closest('tr');
+            if (tr) tr.classList.add('row-corrigida');
+            
+            // Atualiza KPI sem perder foco
+            renderAbsenteismoKpi();
+          }
+        }
+      });
+    }
+  }
+
+  function renderStatusSelect(status, rowIndex, cid) {
+    var options = [
+      "Presença / Trabalhado",
+      "Falta Não Justificada",
+      "Atestado Médico",
+      "Declaração",
+      "INSS",
+      "Férias",
+      "Licença Maternidade",
+      "Folga / Compensado"
+    ];
+    
+    var currentVal = String(status || '').trim().toUpperCase();
+    var selectHtml = '<select class="form-select form-select-sm select-status-preview" data-row-index="' + rowIndex + '" style="min-width: 150px; display: inline-block; width: auto;">';
+    
+    var foundMatch = false;
+    options.forEach(function(opt) {
+      var isSelected = currentVal === opt.toUpperCase() ? 'selected' : '';
+      if (isSelected) foundMatch = true;
+      selectHtml += '<option value="' + esc(opt) + '" ' + isSelected + '>' + esc(opt) + '</option>';
+    });
+    
+    // Se o status atual não estiver na lista padrão, adiciona ele como opção selecionada
+    if (!foundMatch && status) {
+      selectHtml += '<option value="' + esc(status) + '" selected>' + esc(status) + '</option>';
+    } else if (!foundMatch && !status) {
+      selectHtml = '<select class="form-select form-select-sm select-status-preview" data-row-index="' + rowIndex + '" style="min-width: 150px; display: inline-block; width: auto;">' +
+                   '<option value="" selected>--</option>' + selectHtml.substring(selectHtml.indexOf('>') + 1);
+    }
+    
+    selectHtml += '</select>';
+    
+    if (cid && String(cid).trim()) {
+      selectHtml += ' <span class="badge badge-info ms-1" title="CID do atestado">CID: ' + esc(String(cid).trim()) + '</span>';
+    }
+    
+    return selectHtml;
   }
 
   function renderStatusBadge(status, cid) {

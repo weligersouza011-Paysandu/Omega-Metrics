@@ -19,7 +19,7 @@ const { initDatabase, createLote, getLote, confirmLote,
   getDesligamentosHistorico, getCalendarioDatas,
   getCalendarioOperacional, upsertDiaOperacional, gerarCalendarioAno,
   getPeriodoLimites, getEfetivoTotal, getTipoDiasPorPeriodo,
-  countByDate, getByDate, deleteByDate, formatHorarioValue } = require('./src/database/dbService');
+  countByDate, getByDate, deleteByDate, formatHorarioValue, verificarMatriculasNovas, updatePontoBatch } = require('./src/database/dbService');
 
 const { parseExcelFiles, validateData, validatePontoRow, applyCorrecoes, toPontoDataShape, toDesligDataShape, calculateMetrics, formatExcelDate, excelDecimalToTime, STATUS_CONFIG, STATUS_ALIASES, getStatusMeta, calcularAbsenteismo, calcEfetivoAtivoPorMes, calcTurnoverMensal, calcTurnoverPorFuncao, applyCrossFilters, applyCrossFiltersDeslig, temFiltro, META_TURNOVER_GERAL, META_TURNOVER_OPERACIONAL, MOTIVOS_TURNOVER_RELEVANTES } = require('./src/services/tratamentoService');
 
@@ -207,7 +207,6 @@ app.post('/api/tratamento/processar-arquivo', upload.fields([
         totalNormais: r.totalNormais
       }))
     };
-
     return res.json({
       success: true,
       loteId,
@@ -759,15 +758,19 @@ app.get('/api/health', (req, res) => {
 
 app.get('/api/dados/checar', async (req, res) => {
   try {
-    const { data } = req.query;
-    const counts = await countByDate(data);
+    const { data, dataFim } = req.query;
+    const counts = await countByDate(data, dataFim);
+    const dados = await getByDate(data, dataFim);
     return res.json({
       success: true,
       data,
+      dataFim,
       ponto: counts.ponto,
       desligamentos: counts.desligamentos,
       funcionarios: counts.funcionarios,
-      total: counts.ponto + counts.desligamentos
+      total: counts.ponto + counts.desligamentos,
+      registros: dados.ponto,
+      registrosDesligamentos: dados.desligamentos
     });
   } catch (err) {
     return res.status(err.statusCode || 500).json({ success: false, error: err.message });
@@ -776,8 +779,8 @@ app.get('/api/dados/checar', async (req, res) => {
 
 app.get('/api/dados/download', async (req, res) => {
   try {
-    const { data } = req.query;
-    const { ponto, desligamentos } = await getByDate(data);
+    const { data, dataFim } = req.query;
+    const { ponto, desligamentos } = await getByDate(data, dataFim);
 
     if (ponto.length === 0 && desligamentos.length === 0) {
       return res.status(404).json({ success: false, error: 'Nenhum registro encontrado para esta data.' });
@@ -811,6 +814,20 @@ app.delete('/api/dados/deletar', async (req, res) => {
     const result = await deleteByDate(data);
     console.log(`[EXPURGO] ${data} — ponto: ${result.ponto}, desligamentos: ${result.desligamentos}`);
     return res.json({ success: true, data, removidos: result });
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({ success: false, error: err.message });
+  }
+});
+
+app.put('/api/dados/atualizar', async (req, res) => {
+  try {
+    const { alteracoes } = req.body;
+    if (!alteracoes || !Array.isArray(alteracoes)) {
+      return res.status(400).json({ success: false, error: 'Lista de alterações é obrigatória.' });
+    }
+    const count = await updatePontoBatch(alteracoes);
+    kpiCache.flushAll();
+    return res.json({ success: true, atualizados: count });
   } catch (err) {
     return res.status(err.statusCode || 500).json({ success: false, error: err.message });
   }

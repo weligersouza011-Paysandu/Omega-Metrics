@@ -125,7 +125,7 @@
     <div id="status-error" class="alert alert-danger" style="display:none;"></div>
 
     <!-- CARD PRINCIPAL -->
-    <div class="rhub-card" id="card-gestao" style="max-width: 860px; margin: 0 auto; width: 100%;">
+    <div class="rhub-card" id="card-gestao" style="max-width: 1200px; margin: 0 auto; width: 100%;">
       <div class="rhub-card__header">
         <span class="rhub-card__title">
           <i class="bi bi-calendar3-event"></i> Selecione o dia
@@ -134,14 +134,22 @@
 
       <div class="card-body">
 
-        <!-- SELEÇÃO DE DATA -->
-        <div class="form-row form-row-single">
-          <div class="form-group">
+        <!-- SELEÇÃO DE DATA / PERÍODO -->
+        <div class="form-row form-row-single" style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
+          <div class="form-group" style="flex: 1; min-width: 200px;">
             <label class="label" for="data-selecao">
-              <i class="bi bi-calendar-date"></i> Data de referência
+              <i class="bi bi-calendar-date"></i> Data Inicial / Referência
             </label>
             <input type="text" id="data-selecao" class="input" placeholder="DD/MM/AAAA">
-            <span class="form-hint">Formato armazenado no banco: YYYY-MM-DD</span>
+            <span class="form-hint">Formato: YYYY-MM-DD</span>
+          </div>
+          
+          <div class="form-group" style="flex: 1; min-width: 200px;">
+            <label class="label" for="data-final">
+              <i class="bi bi-calendar-range"></i> Data Final (Opcional - Modo Período)
+            </label>
+            <input type="text" id="data-final" class="input" placeholder="DD/MM/AAAA">
+            <span class="form-hint">Preencha para consultar intervalo</span>
           </div>
         </div>
 
@@ -180,14 +188,151 @@
             Nenhum registro encontrado para esta data.
           </div>
 
-          <!-- AÇÕES -->
-          <div class="form-actions">
+          <!-- AÇÕES GLOBAIS (Backup e Excluir) -->
+          <div class="form-actions mb-4">
             <button type="button" class="btn btn-primary" id="btn-download" disabled>
               <i class="bi bi-file-earmark-spreadsheet"></i> Baixar backup (.xlsx)
             </button>
-            <button type="button" class="btn btn-danger" id="btn-excluir" disabled>
+            <button type="button" class="btn btn-danger" id="btn-excluir" disabled title="A exclusão só é permitida em consulta de dia único">
               <i class="bi bi-trash3"></i> Excluir dados do dia
             </button>
+          </div>
+
+          <!-- ============================================================
+               ANÁLISE E EDIÇÃO DE REGISTROS EM QUADROS MODULARES
+               ============================================================ -->
+          <div id="painel-detalhes" style="display:none; margin-top: 1.5rem;">
+            
+            <div class="rhub-section-divider" role="separator" style="margin-top:0; margin-bottom:1.25rem;">
+              <span class="rhub-section-divider__label">ANÁLISE E EDIÇÃO MODULAR DE REGISTROS</span>
+            </div>
+
+            <div class="gestao-quadros-container">
+
+              <!-- QUADRO 1: ✨ NOVOS CONTRATADOS / ADMITIDOS DO DIA -->
+              <div class="quadro-card quadro-card--admitidos" id="quadro-admitidos">
+                <div class="quadro-card__header">
+                  <h5 class="quadro-card__title">
+                    <i class="bi bi-person-plus-fill" style="color:#059669;"></i>
+                    <span>✨ Novos Contratados / Admitidos do Dia</span>
+                  </h5>
+                  <span class="badge badge-admitido" id="badge-count-admitidos">0 admitidos</span>
+                </div>
+                <div class="card-body" style="padding: 0.75rem 1rem;">
+                  <div class="table-container" style="max-height: 280px; overflow-y: auto;">
+                    <table class="table table-gestao">
+                      <thead>
+                        <tr>
+                          <th style="width: 110px;">Data</th>
+                          <th style="width: 140px;">Matrícula</th>
+                          <th>Nome do Colaborador</th>
+                          <th style="width: 220px;">Status</th>
+                          <th style="width: 280px;">Observação / Justificativa</th>
+                        </tr>
+                      </thead>
+                      <tbody id="tbody-admitidos"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              <!-- QUADRO 2: 🚨 DESLIGADOS / DEMITIDOS -->
+              <div class="quadro-card quadro-card--demitidos" id="quadro-demitidos">
+                <div class="quadro-card__header">
+                  <h5 class="quadro-card__title">
+                    <i class="bi bi-person-dash-fill" style="color:#dc2626;"></i>
+                    <span>🚨 Desligados / Demitidos</span>
+                  </h5>
+                  <span class="badge badge-demitido" id="badge-count-demitidos">0 desligados</span>
+                </div>
+                <div class="card-body" style="padding: 0.75rem 1rem;">
+                  <div class="table-container" style="max-height: 280px; overflow-y: auto;">
+                    <table class="table table-gestao">
+                      <thead>
+                        <tr>
+                          <th style="width: 110px;">Data</th>
+                          <th style="width: 140px;">Matrícula</th>
+                          <th>Nome do Colaborador</th>
+                          <th style="width: 220px;">Status</th>
+                          <th style="width: 280px;">Observação / Justificativa</th>
+                        </tr>
+                      </thead>
+                      <tbody id="tbody-demitidos"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              <!-- QUADRO 3: 🏥 AFASTAMENTOS E OCORRÊNCIAS (INSS, Férias, Licença Maternidade, Atestados e Faltas) -->
+              <div class="quadro-card quadro-card--afastamentos" id="quadro-afastamentos">
+                <div class="quadro-card__header">
+                  <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <h5 class="quadro-card__title">
+                      <i class="bi bi-heart-pulse-fill" style="color:#d97706;"></i>
+                      <span>🏥 Afastamentos e Ocorrências</span>
+                    </h5>
+                    <span class="text-muted" style="font-size:0.8rem; font-weight:normal;">(INSS, Férias, Licença Maternidade, Atestados e Faltas)</span>
+                  </div>
+                  <span class="badge badge-warning" id="badge-count-afastamentos">0 afastados</span>
+                </div>
+                <div class="card-body" style="padding: 0.75rem 1rem;">
+                  <div class="table-container" style="max-height: 320px; overflow-y: auto;">
+                    <table class="table table-gestao">
+                      <thead>
+                        <tr>
+                          <th style="width: 110px;">Data</th>
+                          <th style="width: 140px;">Matrícula</th>
+                          <th>Nome do Colaborador</th>
+                          <th style="width: 220px;">Status</th>
+                          <th style="width: 280px;">Observação / Justificativa</th>
+                        </tr>
+                      </thead>
+                      <tbody id="tbody-afastamentos"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              <!-- QUADRO 4: ✅ COLABORADORES PRESENTES (Efetivo Real) -->
+              <div class="quadro-card quadro-card--presentes" id="quadro-presentes">
+                <div class="quadro-card__header">
+                  <h5 class="quadro-card__title">
+                    <i class="bi bi-person-check-fill" style="color:#2563eb;"></i>
+                    <span>✅ Colaboradores Presentes (Efetivo Real)</span>
+                  </h5>
+                  <span class="badge badge-success" id="badge-count-presentes">0 presentes</span>
+                </div>
+                <div class="card-body" style="padding: 0.75rem 1rem;">
+                  <div class="table-container" style="max-height: 420px; overflow-y: auto;">
+                    <table class="table table-gestao">
+                      <thead>
+                        <tr>
+                          <th style="width: 110px;">Data</th>
+                          <th style="width: 140px;">Matrícula</th>
+                          <th>Nome do Colaborador</th>
+                          <th style="width: 220px;">Status</th>
+                          <th style="width: 280px;">Observação / Justificativa</th>
+                        </tr>
+                      </thead>
+                      <tbody id="tbody-presentes"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+
+            <!-- BARRA FLUTUANTE DE RODAPÉ -->
+            <div class="gestao-floating-bar" id="barra-acoes-gestao">
+              <div class="text-muted" style="font-size: 0.88rem;" id="info-alteracoes-pendentes">
+                <i class="bi bi-check-circle-fill" style="color:var(--success);"></i> Nenhuma alteração pendente
+              </div>
+              <button type="button" class="btn btn-success btn-lg" id="btn-salvar-alteracoes" disabled>
+                <i class="bi bi-floppy-fill"></i>
+                <span>💾 Salvar Alterações do Dia</span>
+              </button>
+            </div>
+
           </div>
         </div>
 

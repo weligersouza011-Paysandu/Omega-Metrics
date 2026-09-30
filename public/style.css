@@ -742,6 +742,45 @@ a:hover { text-decoration: underline; }
   background: #dcfce7;
 }
 
+/* Badge & card — Demitidos */
+.badge-demitido {
+  background: linear-gradient(135deg, #fecaca 0%, #fca5a5 100%);
+  color: #991b1b;
+  border: 1px solid #f87171;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  margin-left: 0.5rem;
+}
+
+.row-demitido {
+  background: #fef2f2 !important;
+  transition: background 0.15s ease;
+}
+
+.row-demitido:hover {
+  background: #fee2e2 !important;
+}
+
+.admitidos-bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+}
+
+.select-status-linha {
+  padding: 0.2rem 0.4rem;
+  font-size: 0.8rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background-color: white;
+  width: 100%;
+  max-width: 180px;
+}
+
 .status-bar {
   display: flex;
   align-items: center;
@@ -2490,5 +2529,235 @@ body.pdf-export .rhub-filters { display: none !important; }
     display: none !important;
   }
 }
+
+/* ============================================================
+   GESTÃO DE DADOS — ESTILIZAÇÃO PADRONIZADA (IGUAL A TRATAMENTO)
+   ============================================================ */
+
+.filtros-categorias-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding: 0.25rem 0;
+}
+
+.filtro-card-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.9rem;
+  border-radius: 9999px;
+  border: 1px solid var(--gray-300);
+  background: var(--white);
+  color: var(--gray-700);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+  user-select: none;
+  box-shadow: var(--shadow-sm);
+}
+
+.filtro-card-btn:hover {
+  background: var(--gray-100);
+  border-color: var(--gray-400);
+  color: var(--gray-900);
+}
+
+.filtro-card-btn.active {
+  background: var(--gray-900);
+  border-color: var(--gray-900);
+  color: var(--white);
+  box-shadow: var(--shadow);
+}
+
+.filtro-card-btn.active .badge {
+  filter: brightness(1.05);
+}
+
+.table-gestao {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.85rem;
+  text-align: left;
+}
+
+.table-gestao th {
+  background: var(--gray-50);
+  color: var(--gray-700);
+  font-weight: 700;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.75rem 1rem;
+  border-bottom: 2px solid var(--gray-200);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  white-space: nowrap;
+}
+
+.table-gestao td {
+  padding: 0.65rem 1rem;
+  border-bottom: 1px solid var(--gray-200);
+  vertical-align: middle;
+}
+
+.table-gestao tbody tr {
+  transition: background 150ms ease;
+}
+
+.table-gestao tbody tr:nth-child(even) {
+  background: #f8fafc;
+}
+
+.table-gestao tbody tr:hover {
+  background: #f1f5f9;
+}
+
+.table-gestao .row-demitido {
+  background: #fef2f2 !important;
+}
+
+.table-gestao .row-demitido:hover {
+  background: #fee2e2 !important;
+}
+
+.table-gestao .row-admitido {
+  background: #f0fdf4 !important;
+}
+
+.table-gestao .row-admitido:hover {
+  background: #dcfce7 !important;
+}
+
+.table-gestao .row-corrigida {
+  background: rgba(22, 163, 74, 0.08) !important;
+  box-shadow: inset 3px 0 0 var(--success);
+}
+
+.table-select,
+.table-input,
+.select-status-padrao,
+.input-observacao-padrao {
+  width: 100%;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.83rem;
+  border: 1px solid var(--gray-300);
+  border-radius: var(--radius-sm);
+  background: var(--white);
+  color: var(--gray-800);
+  outline: none;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.select-status-padrao {
+  cursor: pointer;
+  min-width: 180px;
+  font-weight: 500;
+}
+
+.input-observacao-padrao {
+  min-width: 220px;
+}
+
+.table-select:focus,
+.table-input:focus,
+.select-status-padrao:focus,
+.input-observacao-padrao:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18);
+}
+
+/* QUADROS MODULARES DE GESTÃO DE DADOS */
+.gestao-quadros-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  margin-top: 1.5rem;
+}
+
+.quadro-card {
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  transition: transform 150ms ease, box-shadow 150ms ease;
+}
+
+.quadro-card__header {
+  padding: 0.85rem 1.25rem;
+  background: var(--gray-50);
+  border-bottom: 1px solid var(--gray-200);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.quadro-card__title {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--gray-900);
+  margin: 0;
+}
+
+.quadro-card--admitidos {
+  border-top: 4px solid #059669;
+}
+.quadro-card--admitidos .quadro-card__header {
+  background: linear-gradient(to right, #f0fdf4 0%, var(--gray-50) 100%);
+}
+
+.quadro-card--demitidos {
+  border-top: 4px solid #dc2626;
+}
+.quadro-card--demitidos .quadro-card__header {
+  background: linear-gradient(to right, #fef2f2 0%, var(--gray-50) 100%);
+}
+
+.quadro-card--afastamentos {
+  border-top: 4px solid #d97706;
+}
+.quadro-card--afastamentos .quadro-card__header {
+  background: linear-gradient(to right, #fffbeb 0%, var(--gray-50) 100%);
+}
+
+.quadro-card--presentes {
+  border-top: 4px solid #2563eb;
+}
+.quadro-card--presentes .quadro-card__header {
+  background: linear-gradient(to right, #eff6ff 0%, var(--gray-50) 100%);
+}
+
+/* BARRA FLUTUANTE DE RODAPÉ */
+.gestao-floating-bar {
+  position: sticky;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-top: 2px solid var(--gray-200);
+  padding: 0.85rem 1.5rem;
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.08);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-radius: 0 0 var(--radius) var(--radius);
+  margin-top: 1rem;
+}
+
+
 
 

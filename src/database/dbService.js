@@ -736,16 +736,21 @@ function invalidDateError() {
   return err;
 }
 
-async function countByDate(data) {
+async function countByDate(data, dataFim = null) {
   if (!isValidDate(data)) throw invalidDateError();
+  if (dataFim && !isValidDate(dataFim)) throw invalidDateError();
+
+  const queryCond = dataFim ? 'BETWEEN $1 AND $2' : '= $1';
+  const params = dataFim ? [data, dataFim] : [data];
+
   const pontoResult = await pool.query(
-    'SELECT COUNT(*) as c FROM ponto_historico WHERE data_registro = $1', [data]
+    `SELECT COUNT(*) as c FROM ponto_historico WHERE data_registro ${queryCond}`, params
   );
   const desligResult = await pool.query(
-    'SELECT COUNT(*) as c FROM desligamentos_justificados WHERE data_desligamento = $1', [data]
+    `SELECT COUNT(*) as c FROM desligamentos_justificados WHERE data_desligamento ${queryCond}`, params
   );
   const funcsResult = await pool.query(
-    'SELECT COUNT(DISTINCT chave_funcionario) as c FROM ponto_historico WHERE data_registro = $1', [data]
+    `SELECT COUNT(DISTINCT chave_funcionario) as c FROM ponto_historico WHERE data_registro ${queryCond}`, params
   );
   return {
     ponto: pontoResult.rows[0].c,
@@ -754,13 +759,19 @@ async function countByDate(data) {
   };
 }
 
-async function getByDate(data) {
+async function getByDate(data, dataFim = null) {
   if (!isValidDate(data)) throw invalidDateError();
+  if (dataFim && !isValidDate(dataFim)) throw invalidDateError();
+
+  const queryCondPonto = dataFim ? 'data_registro BETWEEN $1 AND $2' : 'data_registro = $1';
+  const queryCondDeslig = dataFim ? 'data_desligamento BETWEEN $1 AND $2' : 'data_desligamento = $1';
+  const params = dataFim ? [data, dataFim] : [data];
+
   const ponto = await pool.query(
-    'SELECT * FROM ponto_historico WHERE data_registro = $1 ORDER BY nome_funcionario', [data]
+    `SELECT * FROM ponto_historico WHERE ${queryCondPonto} ORDER BY data_registro, nome_funcionario`, params
   );
   const desligamentos = await pool.query(
-    'SELECT * FROM desligamentos_justificados WHERE data_desligamento = $1 ORDER BY nome_funcionario', [data]
+    `SELECT * FROM desligamentos_justificados WHERE ${queryCondDeslig} ORDER BY data_desligamento, nome_funcionario`, params
   );
   return { ponto: ponto.rows, desligamentos: desligamentos.rows };
 }
@@ -817,6 +828,40 @@ async function getTurnoverCounts(dataInicio, dataFim) {
   return counts;
 }
 
+async function verificarMatriculasNovas(listaMatriculas) {
+  if (!listaMatriculas || listaMatriculas.length === 0) return [];
+  
+  // Limpa possíveis valores vazios/nulos
+  const limpa = listaMatriculas.filter(m => m && String(m).trim() !== '');
+  if (limpa.length === 0) return [];
+
+  // Remove duplicatas
+  const unicos = [...new Set(limpa.map(m => String(m).trim()))];
+
+  const result = await pool.query(
+    'SELECT DISTINCT chave_funcionario FROM ponto_historico WHERE chave_funcionario = ANY($1)',
+    [unicos]
+  );
+  
+  const existentes = new Set(result.rows.map(r => r.chave_funcionario));
+  const novas = unicos.filter(mat => !existentes.has(mat));
+  return novas;
+}
+
+async function updatePontoBatch(alteracoes) {
+  return withTransaction(async (client) => {
+    let count = 0;
+    for (const alt of alteracoes) {
+      await client.query(
+        'UPDATE ponto_historico SET status = $1, cid = $2, atualizado_em = $3 WHERE id = $4',
+        [alt.status, alt.justificativa, nowIso(), alt.id]
+      );
+      count++;
+    }
+    return count;
+  });
+}
+
 module.exports = {
   initDatabase,
   getPool,
@@ -845,5 +890,7 @@ module.exports = {
   getTurnoverCounts,
   normalizeDate,
   normalizeFuncionarioKey,
-  formatHorarioValue
+  formatHorarioValue,
+  verificarMatriculasNovas,
+  updatePontoBatch
 };
