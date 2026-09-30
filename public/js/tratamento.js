@@ -82,6 +82,7 @@
   };
 
   var RE_DEMISSAO = /DEMITID[OA]S?|DEMISS(OES|AO)|DESLIGAD[OA]S?|RESCIS(OES|AO)/;
+  var RE_ADMITIDO = /ADMITID[OA]S?|ADMISS(OES|AO)|ENTRADA\s*DE|NOVO\s*COLABOR|PRIMEIRO\s*DIA|INTEGRA(CAO|\u00c7\u00c3O)|CONTRATA(DO|DOS)/;
 
   function normalizeStatusKey(s) {
     return String(s || '')
@@ -505,6 +506,7 @@
     renderInconsistencias();
     renderDemissoes(demissoesPendentes);
     renderAbsenteismoKpi();
+    renderAdmitidos();
     updateSendButton();
   }
 
@@ -517,6 +519,76 @@
       ' / Dias previstos: ' + abs.totalPrevistos +
       ' | Isenções excluídas: ' + abs.excluidos.isencoes;
     el.className = 'badge ' + (abs.percentual > 0 ? 'badge-danger' : 'badge-success');
+  }
+
+  /**
+   * detectarAdmitidos() — varre dadosProcessados buscando matrículas/nomes
+   * que só aparecem no lote com indicadores de primeiro registro:
+   *  1. Status/motivo bate com RE_ADMITIDO, OU
+   *  2. Matrícula nunca vista antes neste lote (possível novo ingresso)
+   *     e aparece apenas num único dia (1º dia de trabalho).
+   * Retorna array dedupado por matrícula com o 1º registro de cada um.
+   */
+  function detectarAdmitidos() {
+    var porMatricula = {};
+    dadosProcessados.forEach(function (r) {
+      var mat = String(r.matricula || '').trim();
+      var statusNorm = normalizeStatusKey(r.status);
+      var isAdmitidoByStatus = RE_ADMITIDO.test(statusNorm);
+
+      if (!mat) return;
+      if (!porMatricula[mat]) {
+        porMatricula[mat] = { rows: [], admitidoByStatus: false };
+      }
+      porMatricula[mat].rows.push(r);
+      if (isAdmitidoByStatus) porMatricula[mat].admitidoByStatus = true;
+    });
+
+    var admitidos = [];
+    Object.keys(porMatricula).forEach(function (mat) {
+      var info = porMatricula[mat];
+      // Critério 1: status explícito de admissão
+      if (info.admitidoByStatus) {
+        var primeiro = info.rows[0];
+        admitidos.push(primeiro);
+        return;
+      }
+      // Critério 2: aparece apenas em 1 dia E não é demição
+      if (info.rows.length === 1) {
+        var r = info.rows[0];
+        var meta = getStatusMeta(r.status);
+        if (meta.grupo !== 'DEMISSAO') {
+          admitidos.push(r);
+        }
+      }
+    });
+    return admitidos;
+  }
+
+  function renderAdmitidos() {
+    var section = document.getElementById('admitidos-section');
+    var badge = document.getElementById('badge-admitidos');
+    var tbody = document.getElementById('admitidos-tbody');
+    if (!section || !tbody) return;
+
+    var lista = detectarAdmitidos();
+    if (lista.length === 0) {
+      section.style.display = 'none';
+      return;
+    }
+
+    section.style.display = 'block';
+    badge.textContent = lista.length + (lista.length === 1 ? ' colaborador' : ' colaboradores');
+
+    tbody.innerHTML = lista.map(function (r) {
+      return '<tr class="row-admitido">' +
+        '<td><strong>' + esc(r.matricula || '—') + '</strong></td>' +
+        '<td>' + esc(r.funcionario || '—') + '</td>' +
+        '<td>' + esc(r.funcao || '—') + '</td>' +
+        '<td>' + esc(formatExcelDate(r.dia) || '—') + '</td>' +
+        '<td><span class="badge badge-admitido">Admitido</span></td>' +
+        '</tr>';
+    }).join('');
   }
 
   function renderPreview() {

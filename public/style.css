@@ -715,6 +715,33 @@ a:hover { text-decoration: underline; }
 .badge-gray { background: var(--gray-200); color: var(--gray-700); }
 .badge-purple { background: #f3e8ff; color: #6b21a8; }
 
+/* Badge & card — Admitidos */
+.badge-admitido {
+  background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+  color: #065f46;
+  border: 1px solid #6ee7b7;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.card-admitidos {
+  border-left: 4px solid #059669;
+  background: linear-gradient(to right, #f0fdf4 0%, #fff 100%);
+}
+
+.card-admitidos .card-header {
+  border-bottom: 1px solid #bbf7d0;
+}
+
+.row-admitido {
+  background: #f0fdf4;
+  transition: background 0.15s ease;
+}
+
+.row-admitido:hover {
+  background: #dcfce7;
+}
+
 .status-bar {
   display: flex;
   align-items: center;

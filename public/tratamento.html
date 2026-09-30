@@ -175,6 +175,37 @@
         </div>
       </div>
 
+      <div id="admitidos-section" class="card mb-4 card-admitidos" style="display:none;">
+        <div class="card-header">
+          <div class="header-left">
+            <i class="bi bi-person-plus-fill" style="color:#059669;"></i>
+            <h5>Novos Admitidos Identificados no Lote</h5>
+          </div>
+          <span class="badge badge-admitido" id="badge-admitidos">0 colaboradores</span>
+        </div>
+        <div class="card-body">
+          <p class="mb-3 text-muted" style="font-size:0.85rem;">
+            <i class="bi bi-info-circle"></i>
+            Os colaboradores abaixo apresentam indicadores de <strong>admissão/primeiro registro</strong> no lote importado.
+            Verifique antes de confirmar o envio. A importação <strong>não é bloqueada</strong> por este alerta.
+          </p>
+          <div class="table-container">
+            <table class="table" id="admitidos-table">
+              <thead>
+                <tr>
+                  <th>Matrícula</th>
+                  <th>Nome</th>
+                  <th>Função</th>
+                  <th>1º Dia no Lote</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="admitidos-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
       <div id="inconsistencias-section" class="card mb-4" style="display:none;">
         <div class="card-header">
           <div class="header-left">
