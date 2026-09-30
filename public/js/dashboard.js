@@ -115,6 +115,7 @@
       setupCrossChip();
       setupRankingClick();
       setupExportPdf();
+      setupBtnLimparFiltros();
     } catch (e) {
       console.error('Erro durante o setup do dashboard (renderização segue):', e);
     }
@@ -243,9 +244,9 @@
     if (globalFilter.dia) q += '&dia=' + encodeURIComponent(globalFilter.dia);
     if (globalFilter.mes) q += '&mes=' + encodeURIComponent(globalFilter.mes);
     if (globalFilter.colaborador) q += '&colaborador=' + encodeURIComponent(globalFilter.colaborador);
-      if (globalFilter.funcao) q += '&funcao=' + encodeURIComponent(globalFilter.funcao);
-      if (globalFilter.motivo) q += '&motivo=' + encodeURIComponent(globalFilter.motivo);
-      return q;
+    if (globalFilter.funcao) q += '&funcao=' + encodeURIComponent(globalFilter.funcao);
+    if (globalFilter.motivo) q += '&motivo=' + encodeURIComponent(globalFilter.motivo);
+    return q;
   }
 
   // Algum filtro que encolhe a resposta do calendário? (o filtro de dia é
@@ -263,13 +264,45 @@
     fetchDashboardData({ background: true, filterChange: true });
   }
 
-      function clearCrossFilters() {
-        globalFilter.colaborador = null;
-        globalFilter.funcao = null;
-        globalFilter.mes = null;
-        globalFilter.motivo = null;
-        syncFilterChips();
+  function clearCrossFilters() {
+    globalFilter.colaborador = null;
+    globalFilter.funcao = null;
+    globalFilter.mes = null;
+    globalFilter.motivo = null;
+    syncFilterChips();
     fetchDashboardData({ background: true, filterChange: true });
+  }
+
+  // Reseta TODOS os filtros globais e volta ao período padrão
+  function clearAllFilters() {
+    globalFilter.dia = null;
+    globalFilter.colaborador = null;
+    globalFilter.funcao = null;
+    globalFilter.mes = null;
+    globalFilter.motivo = null;
+    globalFilter.justificativa = null;
+
+    // Esconde drill-down da Matriz
+    var dd = document.getElementById('matriz-drilldown');
+    if (dd) dd.style.display = 'none';
+
+    // Volta range para o padrão
+    var padrao = janelaPeriodoPadrao();
+    currentRange.inicio = padrao.inicio;
+    currentRange.fim = padrao.fim;
+
+    // Sincroniza flatpickr se existir
+    if (window.fpInstance) {
+      window.fpInstance.setDate([currentRange.inicio, currentRange.fim], false);
+    }
+
+    syncFilterChips();
+    fetchDashboardData({ background: false, filterChange: false });
+  }
+
+  function setupBtnLimparFiltros() {
+    var btn = document.getElementById('btn-limpar-filtros');
+    if (btn) btn.addEventListener('click', clearAllFilters);
   }
 
   // Chips da barra de filtros (dia, justificativa e cruzados)
@@ -310,11 +343,11 @@
   function matchFiltroLocal(r, skip, nome, cargo) {
     var f = globalFilter;
     if (skip !== 'justificativa' && f.justificativa &&
-        normLocal(r.status) !== normLocal(f.justificativa)) return false;
+      normLocal(r.status) !== normLocal(f.justificativa)) return false;
     if (skip !== 'dia' && f.dia && r.dia !== f.dia) return false;
     if (skip !== 'mes' && f.mes && String(r.dia || '').substring(0, 7) !== f.mes) return false;
     if (skip !== 'colaborador' && f.colaborador &&
-        normLocal(nome) !== normLocal(f.colaborador)) return false;
+      normLocal(nome) !== normLocal(f.colaborador)) return false;
     if (skip !== 'funcao' && f.funcao && normLocal(cargo) !== normLocal(f.funcao)) return false;
     return true;
   }
@@ -357,7 +390,7 @@
   function readLocalStorageRecords() {
     try {
       var raw = localStorage.getItem('omega_ponto_data') ||
-                localStorage.getItem('fDB_Ponto_Tratado');
+        localStorage.getItem('fDB_Ponto_Tratado');
       if (!raw) return null;
 
       var parsed = JSON.parse(raw);
@@ -630,9 +663,16 @@
       var nome = nomeDe(r);
       if (!matchFiltroLocal(r, 'dia', nome, cargoDe(r))) return;
       if (ehDemitidoAtual(nome)) return;
-      if (!isFaltaDe(r) && !isPresencaDe(r)) return;
+      
       var d = r.dia;
-      if (!diaMap[d]) diaMap[d] = { data: d, faltas: 0, previstos: 0, percentual: 0 };
+      if (!diaMap[d]) diaMap[d] = { data: d, faltas: 0, previstos: 0, percentual: 0, inss: 0, ferias: 0, maternidade: 0 };
+      
+      var st = statusDe(r);
+      if (st === 'INSS' || st === 'LICENCA INSS') diaMap[d].inss++;
+      if (st === 'FÉRIAS' || st === 'FERIAS') diaMap[d].ferias++;
+      if (st === 'LICENÇA MATERNIDADE' || st === 'LICENCA MATERNIDADE') diaMap[d].maternidade++;
+      
+      if (!isFaltaDe(r) && !isPresencaDe(r)) return;
       diaMap[d].previstos++;
       if (isFaltaDe(r)) diaMap[d].faltas++;
     });
@@ -1327,7 +1367,7 @@
   // Garante a âncora (ano/mês) antes de deslizar a janela de meses.
   function garantirCalAncora() {
     if (!calState.ano || isNaN(calState.ano) ||
-        calState.mes === null || calState.mes === undefined || isNaN(calState.mes)) {
+      calState.mes === null || calState.mes === undefined || isNaN(calState.mes)) {
       var ref = janelaCalPadrao();
       calState.ano = ref.getFullYear();
       calState.mes = ref.getMonth();
@@ -1355,7 +1395,7 @@
     // Mesma página de meses no DOM → só atualiza classes/títulos/seleção
     // das células existentes (sem innerHTML, sem recriar nós).
     if (key === calPageKey && container.dataset.calKey === key &&
-        container.querySelector('.rhub-month')) {
+      container.querySelector('.rhub-month')) {
       refreshCalendarioCells(container);
       return;
     }
@@ -1391,26 +1431,25 @@
       }
     }
 
-    if (reg && reg.previstos > 0) {
-      var pct = reg.percentual;
+    if (reg && (reg.previstos > 0 || reg.faltas > 0)) {
       el.classList.add('cal-day--has-data');
-      if (pct <= META_ABSENTEISMO) el.classList.add('cal-day--verde');
-      else if (pct <= LIMITE_ALERTA) el.classList.add('cal-day--amarelo');
-      else el.classList.add('cal-day--vermelho');
-
-      var extraDesc = '';
-      if (reg.tipo_dia && reg.tipo_dia !== 'UTIL') {
-        var tipoLabel = reg.tipo_dia === 'FERIADO' ? 'Feriado' : 'Compensado';
-        extraDesc = ' (' + tipoLabel + ' - Escala Extra)';
-      }
+      if (reg.status_cor === 'verde') el.classList.add('cal-day--verde');
+      else if (reg.status_cor === 'amarelo') el.classList.add('cal-day--amarelo');
+      else if (reg.status_cor === 'vermelho') el.classList.add('cal-day--vermelho');
+      else el.classList.add('cal-day--neutro');
 
       var dFormat = iso.split('-').reverse().slice(0, 2).join('/');
-      el.title = dFormat + extraDesc + ': ' + reg.faltas + ' faltas de ' + reg.previstos + ' previstos (' + pctBr(pct) + '%)';
+      var tipoLabel = 'Útil';
+      if (reg.tipo_dia === 'FERIADO') tipoLabel = 'Feriado';
+      else if (reg.tipo_dia === 'COMPENSADO' || reg.tipo_dia === 'FOLGA') tipoLabel = 'Compensado';
+
+      el.title = '📅 ' + dFormat + ' - ' + tipoLabel + '\n👥 Programados: ' + reg.previstos + ' colaboradores\n✅ Presentes: ' + (reg.presentes || 0) + ' colaboradores\n⚠️ Faltas: ' + reg.faltas + ' (' + pctBr(reg.percentual) + '%)';
     } else {
       el.classList.add('cal-day--neutro');
       if (reg && reg.tipo_dia && reg.tipo_dia !== 'UTIL') {
         var dFormat = iso.split('-').reverse().slice(0, 2).join('/');
-        el.title = dFormat + ' (' + (reg.tipo_dia === 'FERIADO' ? 'Feriado' : 'Compensado') + ')';
+        var tipoLabel = reg.tipo_dia === 'FERIADO' ? 'Feriado' : 'Compensado';
+        el.title = '📅 ' + dFormat + ' - ' + tipoLabel + '\n👥 Programados: 0 colaboradores\n✅ Presentes: 0 colaboradores\n⚠️ Faltas: 0 (0,00%)';
       } else {
         el.title = '';
       }
@@ -1499,7 +1538,51 @@
     var next = document.getElementById('cal-next');
     var reset = document.getElementById('cal-ano');
 
-    // ‹ › deslizam a janela de 12 meses de 1 em 1 mês
+    function dispatchNavChange() {
+      // 1. Oculta drill-down sem alterar filtros globais
+      var dd = document.getElementById('matriz-drilldown');
+      if (dd) dd.style.display = 'none';
+
+      // 2. Determina o novo mês alvo da Matriz/Calendário
+      var target = getMatrizMesAno();
+      var firstDay = new Date(target.ano, target.mes, 1);
+      var lastDay = new Date(target.ano, target.mes + 1, 0);
+      var isoInicio = firstDay.toISOString().slice(0, 10);
+      var isoFim = lastDay.toISOString().slice(0, 10);
+
+      // 3. Renderiza imediatamente com dados existentes (resposta visual rápida)
+      if (calViewMode === 'matriz') {
+        renderMatrizDetalhada();
+      } else {
+        renderCalendario();
+      }
+
+      // 4. Busca isolada: só atualiza mapPorDia e re-renderiza a view ativa.
+      //    NÃO modifica currentRange global nem reprocessa gráficos de KPI.
+      var url = API_URL + '/api/dashboard/kpis?dataInicio=' + isoInicio + '&dataFim=' + isoFim;
+      fetch(url)
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+          if (!data || !data.success) return;
+          var g = (data.graficos || data.data && data.data.graficos) || {};
+          // Atualiza apenas o mapa de dias sem tocar cross-filters ou gráficos
+          var dias = g.absenteismoPorDia || [];
+          var novoMapa = {};
+          dias.forEach(function (d) { novoMapa[d.data] = d; });
+          // Merge no mapa base (preserva meses anteriores carregados)
+          Object.keys(novoMapa).forEach(function (k) { mapPorDiaBase[k] = novoMapa[k]; });
+          mapPorDia = crossFilterParcial() ? novoMapa : mapPorDiaBase;
+          if (calViewMode === 'matriz') {
+            renderMatrizDetalhada();
+          } else {
+            renderCalendario();
+          }
+        })
+        .catch(function (err) {
+          console.warn('[NavMatriz] Erro ao buscar dados do mês:', err);
+        });
+    }
+
     if (prev) {
       prev.addEventListener('click', function () {
         garantirCalAncora();
@@ -1508,7 +1591,7 @@
           calState.mes += 12;
           calState.ano -= 1;
         }
-        renderCalendario();
+        dispatchNavChange();
       });
     }
     if (next) {
@@ -1519,17 +1602,15 @@
           calState.mes -= 12;
           calState.ano += 1;
         }
-        renderCalendario();
+        dispatchNavChange();
       });
     }
-    // "Período atual": reposiciona a grade na janela padrão
-    // (primeiro slot = mês atual - 11, último slot = mês atual).
     if (reset) {
       reset.addEventListener('click', function () {
         var ref = janelaCalPadrao();
         calState.ano = ref.getFullYear();
         calState.mes = ref.getMonth();
-        renderCalendario();
+        dispatchNavChange();
       });
     }
   }
@@ -1596,7 +1677,427 @@
     if (btn) btn.addEventListener('click', clearDayFilter);
   }
 
+  /* ============================================================
+     VISÃO MATRIZ DETALHADA — TOGGLE, RENDER E EXPORTAÇÃO
+     ============================================================ */
+
+  var calViewMode = 'cal'; // 'cal' ou 'matriz'
+  var mesesNomeCompleto = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+
+  function setupCalViewToggle() {
+    var btnCal = document.getElementById('btn-view-cal');
+    var btnMatriz = document.getElementById('btn-view-matriz');
+    if (!btnCal || !btnMatriz) return;
+
+    btnCal.addEventListener('click', function () {
+      if (calViewMode === 'cal') return;
+      calViewMode = 'cal';
+      btnCal.classList.add('active');
+      btnMatriz.classList.remove('active');
+      var mAtions = document.getElementById('matriz-actions');
+      if (mAtions) mAtions.style.display = 'none';
+      var grid = document.getElementById('calendario');
+      var legend = document.getElementById('calendario-legend');
+      var mc = document.getElementById('matriz-container');
+      if (grid) grid.style.display = '';
+      if (legend) legend.style.display = '';
+      if (mc) mc.style.display = 'none';
+    });
+
+    btnMatriz.addEventListener('click', function () {
+      if (calViewMode === 'matriz') return;
+      calViewMode = 'matriz';
+      btnMatriz.classList.add('active');
+      btnCal.classList.remove('active');
+      var mAtions = document.getElementById('matriz-actions');
+      if (mAtions) { mAtions.style.display = 'flex'; }
+      var grid = document.getElementById('calendario');
+      var legend = document.getElementById('calendario-legend');
+      var mc = document.getElementById('matriz-container');
+      if (grid) grid.style.display = 'none';
+      if (legend) legend.style.display = 'none';
+      if (mc) mc.style.display = 'block';
+      renderMatrizDetalhada();
+    });
+  }
+
+  function getMatrizMesAno() {
+    garantirCalAncora();
+    // Exibe o último mês da janela atual (o mês âncora + CAL_PAGE_MONTHS - 1)
+    var d = new Date(calState.ano, calState.mes + CAL_PAGE_MONTHS - 1, 1);
+    return { mes: d.getMonth(), ano: d.getFullYear() };
+  }
+
+  function renderMatrizDetalhada() {
+    var mc = document.getElementById('matriz-container');
+    var tbl = document.getElementById('table-matriz');
+    if (!mc || !tbl) return;
+
+    var ref = getMatrizMesAno();
+    var mes = ref.mes;
+    var ano = ref.ano;
+    var totalDias = new Date(ano, mes + 1, 0).getDate();
+
+    // Coleta os dados do mês corrente a partir de mapPorDia
+    var diasMes = [];
+    for (var d = 1; d <= totalDias; d++) {
+      var iso = ano + '-' + String(mes + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+      var reg = mapPorDia[iso] || { data: iso, faltas: 0, previstos: 0, presentes: 0, percentual: 0, tipo_dia: 'UTIL', status_cor: 'neutro' };
+      var dSem = new Date(ano, mes, d).getDay(); // 0=dom, 6=sab
+      diasMes.push({ d: d, iso: iso, reg: reg, dSem: dSem });
+    }
+
+    // Cálculo acumulado do mês (só dias úteis com dados)
+    var totalFaltas = 0, totalPrevistos = 0;
+    diasMes.forEach(function (item) {
+      if (item.reg.previstos > 0 || item.reg.faltas > 0) {
+        totalFaltas += item.reg.faltas || 0;
+        totalPrevistos += item.reg.previstos || 0;
+      }
+    });
+    var acumPct = totalPrevistos > 0 ? (totalFaltas / totalPrevistos * 100) : 0;
+
+    // Monta o cabeçalho
+    var thead = tbl.querySelector('thead');
+    var tbody = tbl.querySelector('tbody');
+    thead.innerHTML = '';
+    tbody.innerHTML = '';
+
+    // Linha 1 header: título do mês + dias
+    var tr1 = document.createElement('tr');
+    var thTitle = document.createElement('th');
+    thTitle.textContent = mesesNomeCompleto[mes] + ' / ' + ano;
+    thTitle.style.textAlign = 'left';
+    tr1.appendChild(thTitle);
+
+    var diasSemanas = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+    diasMes.forEach(function (item) {
+      var th = document.createElement('th');
+      th.textContent = String(item.d).padStart(2, '0');
+      th.dataset.iso = item.iso;
+      th.style.cursor = 'pointer';
+      th.title = 'Clique para ver os detalhes do dia';
+      var tipo = (item.reg && item.reg.tipo_dia) || 'UTIL';
+      if (tipo === 'FERIADO') th.style.cssText += 'background:#1e3a8a;';
+      else if (tipo === 'COMPENSADO' || item.dSem === 0 || item.dSem === 6) th.style.cssText += 'background:#92400e;';
+      tr1.appendChild(th);
+    });
+    // coluna de totais
+    var thTot = document.createElement('th');
+    thTot.textContent = 'TOTAL';
+    tr1.appendChild(thTot);
+    thead.appendChild(tr1);
+
+    // Linha 2 header: dia da semana
+    var tr2 = document.createElement('tr');
+    var thSub = document.createElement('th');
+    thSub.textContent = 'INDICADOR';
+    tr2.appendChild(thSub);
+    diasMes.forEach(function (item) {
+      var th = document.createElement('th');
+      th.textContent = diasSemanas[item.dSem];
+      var tipo = (item.reg && item.reg.tipo_dia) || 'UTIL';
+      if (tipo === 'FERIADO') th.style.cssText = 'background:#1e40af; font-size:0.6rem;';
+      else if (tipo === 'COMPENSADO' || item.dSem === 0 || item.dSem === 6) th.style.cssText = 'background:#b45309; font-size:0.6rem;';
+      else th.style.fontSize = '0.6rem';
+      tr2.appendChild(th);
+    });
+    var thSubTot = document.createElement('th');
+    thSubTot.textContent = 'MÊS';
+    tr2.appendChild(thSubTot);
+    thead.appendChild(tr2);
+
+    // Função auxiliar para criar linha de dados
+    function criarLinha(label, valoresFn, totFn, colorFn) {
+      var tr = document.createElement('tr');
+      var th = document.createElement('th');
+      th.textContent = label;
+      tr.appendChild(th);
+      diasMes.forEach(function (item) {
+        var td = document.createElement('td');
+        var val = valoresFn(item);
+        td.textContent = val;
+        td.dataset.iso = item.iso;
+        td.style.cursor = 'pointer';
+        td.title = 'Clique para ver os detalhes do dia';
+        var tipo = (item.reg && item.reg.tipo_dia) || 'UTIL';
+        var colClass = '';
+        if (tipo === 'FERIADO') colClass = 'col--feriado';
+        else if (tipo === 'COMPENSADO') colClass = 'col--compensado';
+        else if (item.dSem === 0 || item.dSem === 6) colClass = 'col--fim-semana';
+        if (colClass) td.classList.add(colClass);
+        if (colorFn) {
+          var cc = colorFn(item, val);
+          if (cc) td.classList.add(cc);
+        }
+        tr.appendChild(td);
+      });
+      // Coluna total
+      var tdTot = document.createElement('td');
+      tdTot.textContent = totFn ? totFn() : '—';
+      tdTot.style.fontWeight = '800';
+      tr.appendChild(tdTot);
+      return tr;
+    }
+
+    // Linha 1: Efetivo Previsto
+    tbody.appendChild(criarLinha('👥 Efetivo Previsto', function (item) {
+      return item.reg.previstos || 0;
+    }, function () { return totalPrevistos; }, null));
+
+    // Linha 2: Efetivo Real (Presentes)
+    tbody.appendChild(criarLinha('✅ Efetivo Real (Presentes)', function (item) {
+      return item.reg.presentes || (item.reg.previstos - item.reg.faltas) || 0;
+    }, function () { return totalPrevistos - totalFaltas; }, null));
+
+    // Linha 3: Ausentes
+    tbody.appendChild(criarLinha('⚠️ Ausentes (Faltas)', function (item) {
+      return item.reg.faltas || 0;
+    }, function () { return totalFaltas; }, function (item, val) {
+      return val > 0 ? 'cell--vermelho' : 'cell--neutro';
+    }));
+
+    var totalInss = 0, totalFerias = 0, totalMaternidade = 0;
+    diasMes.forEach(function (item) {
+      if (item.reg) {
+        totalInss += item.reg.inss || 0;
+        totalFerias += item.reg.ferias || 0;
+        totalMaternidade += item.reg.maternidade || 0;
+      }
+    });
+
+    // Linha 4: INSS
+    tbody.appendChild(criarLinha('🏥 INSS', function (item) {
+      return item.reg.inss || 0;
+    }, function () { return totalInss; }, null));
+
+    // Linha 5: Férias
+    tbody.appendChild(criarLinha('🏖️ Férias', function (item) {
+      return item.reg.ferias || 0;
+    }, function () { return totalFerias; }, null));
+
+    // Linha 6: Licença Maternidade
+    tbody.appendChild(criarLinha('🍼 Licença Maternidade', function (item) {
+      return item.reg.maternidade || 0;
+    }, function () { return totalMaternidade; }, null));
+
+    // Linha 5: % Absenteísmo Dia
+    tbody.appendChild(criarLinha('📊 Aderência / Absenteísmo Dia (%)', function (item) {
+      if (!item.reg || (item.reg.previstos === 0 && item.reg.faltas === 0)) return '—';
+      return pctBr(item.reg.percentual);
+    }, function () { return pctBr(acumPct); }, function (item) {
+      if (!item.reg || (item.reg.previstos === 0 && item.reg.faltas === 0)) return 'cell--neutro';
+      var sc = item.reg.status_cor || '';
+      if (sc === 'verde') return 'cell--verde';
+      if (sc === 'amarelo') return 'cell--amarelo';
+      if (sc === 'vermelho') return 'cell--vermelho';
+      return 'cell--neutro';
+    }));
+
+    // Linha 6: Absenteísmo Acumulado Mês
+    var trAcum = document.createElement('tr');
+    trAcum.className = 'row-acumulado';
+    var thAcum = document.createElement('th');
+    thAcum.textContent = '📈 Absenteísmo Acumulado Mês (%)';
+    trAcum.appendChild(thAcum);
+    for (var ci = 0; ci < totalDias; ci++) {
+      var tdAcum = document.createElement('td');
+      tdAcum.textContent = ci === totalDias - 1 ? pctBr(acumPct) : '';
+      if (ci === totalDias - 1) tdAcum.colSpan = 1;
+      trAcum.appendChild(tdAcum);
+    }
+    var tdAcumTot = document.createElement('td');
+    tdAcumTot.textContent = pctBr(acumPct);
+    trAcum.appendChild(tdAcumTot);
+    tbody.appendChild(trAcum);
+
+    // Click handler for Drill-down
+    tbl.onclick = function(e) {
+      var tgt = e.target;
+      if (tgt && tgt.dataset && tgt.dataset.iso) {
+        var iso = tgt.dataset.iso;
+        var parts = iso.split('-');
+        var displayDate = parts[2] + '/' + parts[1] + '/' + parts[0];
+        
+        var dd = document.getElementById('matriz-drilldown');
+        var title = document.getElementById('matriz-drilldown-title');
+        var tbodyDd = document.querySelector('#table-drilldown tbody');
+        
+        if (dd && title && tbodyDd) {
+          title.textContent = 'Detalhamento de Ocorrências - Dia ' + displayDate;
+          dd.style.display = 'block';
+          tbodyDd.innerHTML = '<tr><td colspan="4" class="text-center">Carregando...</td></tr>';
+          
+          var url = '/api/dashboard/detalhe-dia?dia=' + iso;
+          if (globalFilter.status) url += '&status=' + encodeURIComponent(globalFilter.status);
+          if (globalFilter.funcao) url += '&funcao=' + encodeURIComponent(globalFilter.funcao);
+          if (globalFilter.colaborador) url += '&colaborador=' + encodeURIComponent(globalFilter.colaborador);
+          
+          fetch(url)
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+              if (!data.success || !data.dados || data.dados.length === 0) {
+                tbodyDd.innerHTML = '<tr><td colspan="4" class="text-center text-muted">Nenhuma ocorrência encontrada para este dia.</td></tr>';
+                return;
+              }
+              var html = '';
+              data.dados.forEach(function(r) {
+                var badgeClass = 'badge-secondary';
+                var st = (r.status || '').trim().toUpperCase();
+                if (st === 'FALTA' || st.includes('FALTA') || st.includes('ATESTADO')) badgeClass = 'badge-danger';
+                else if (st === 'FÉRIAS' || st === 'FERIAS') badgeClass = 'badge-warning';
+                else if (st === 'INSS' || st.includes('LICENCA')) badgeClass = 'badge-info';
+                
+                html += '<tr>' +
+                  '<td>' + (r.matricula || '—') + '</td>' +
+                  '<td><strong>' + (r.nome_funcionario || '—') + '</strong></td>' +
+                  '<td><span class="badge ' + badgeClass + '">' + (r.status || '—') + '</span></td>' +
+                  '<td>' + (r.justificativa || '—') + '</td>' +
+                '</tr>';
+              });
+              tbodyDd.innerHTML = html;
+            })
+            .catch(function(err) {
+              console.error(err);
+              tbodyDd.innerHTML = '<tr><td colspan="4" class="text-center text-danger">Erro ao carregar detalhes.</td></tr>';
+            });
+        }
+      }
+    };
+  }
+
+  // Setup fechar drilldown
+  var btnCloseDd = document.getElementById('btn-close-drilldown');
+  if (btnCloseDd) {
+    btnCloseDd.addEventListener('click', function() {
+      var dd = document.getElementById('matriz-drilldown');
+      if (dd) dd.style.display = 'none';
+    });
+  }
+
+  /* ---- EXPORTAÇÃO EXCEL (CSV) ---- */
+  function setupMatrizExport() {
+    var btnExcel = document.getElementById('btn-export-matriz-excel');
+    var btnPdf = document.getElementById('btn-export-matriz-pdf');
+
+    if (btnExcel) {
+      btnExcel.addEventListener('click', function () {
+        garantirCalAncora();
+        var ref = getMatrizMesAno();
+        var mes = ref.mes;
+        var ano = ref.ano;
+        var totalDias = new Date(ano, mes + 1, 0).getDate();
+
+        var rows = [];
+        // Cabeçalho
+        var header1 = ['INDICADOR'];
+        var header2 = [''];
+        var diasSemanas = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+        for (var d = 1; d <= totalDias; d++) {
+          header1.push(String(d).padStart(2, '0'));
+          var dSem = new Date(ano, mes, d).getDay();
+          header2.push(diasSemanas[dSem]);
+        }
+        header1.push('TOTAL');
+        header2.push('MÊS');
+        rows.push(header1.join(';'));
+        rows.push(header2.join(';'));
+
+        var labels = ['Efetivo Previsto', 'Efetivo Real (Presentes)', 'Ausentes (Faltas)', 'INSS', 'Férias', 'Licença Maternidade', '% Absenteísmo Dia'];
+        var getters = [
+          function (reg) { return reg.previstos || 0; },
+          function (reg) { return reg.presentes || (reg.previstos - reg.faltas) || 0; },
+          function (reg) { return reg.faltas || 0; },
+          function (reg) { return reg.inss || 0; },
+          function (reg) { return reg.ferias || 0; },
+          function (reg) { return reg.maternidade || 0; },
+          function (reg) { return (reg.previstos > 0 || reg.faltas > 0) ? pctBr(reg.percentual) : '—'; }
+        ];
+
+        var totalFaltasE = 0, totalPrevistoE = 0, totalInssE = 0, totalFeriasE = 0, totalMaternidadeE = 0;
+        var diasArr = [];
+        for (var d2 = 1; d2 <= totalDias; d2++) {
+          var iso = ano + '-' + String(mes + 1).padStart(2, '0') + '-' + String(d2).padStart(2, '0');
+          var reg = mapPorDia[iso] || { faltas: 0, previstos: 0, presentes: 0, percentual: 0, inss: 0, ferias: 0, maternidade: 0 };
+          diasArr.push(reg);
+          totalFaltasE += reg.faltas || 0;
+          totalPrevistoE += reg.previstos || 0;
+          totalInssE += reg.inss || 0;
+          totalFeriasE += reg.ferias || 0;
+          totalMaternidadeE += reg.maternidade || 0;
+        }
+        var acumPctE = totalPrevistoE > 0 ? (totalFaltasE / totalPrevistoE * 100).toFixed(2).replace('.', ',') + '%' : '0,00%';
+        var totais = [totalPrevistoE, totalPrevistoE - totalFaltasE, totalFaltasE, totalInssE, totalFeriasE, totalMaternidadeE, acumPctE];
+
+        labels.forEach(function (lbl, li) {
+          var row = [lbl];
+          diasArr.forEach(function (reg) { row.push(getters[li](reg)); });
+          row.push(totais[li]);
+          rows.push(row.join(';'));
+        });
+
+        rows.push(['Absenteísmo Acumulado Mês (%)'].concat(new Array(totalDias).fill('')).concat([acumPctE]).join(';'));
+
+        var bom = '\uFEFF';
+        var blob = new Blob([bom + rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = 'Matriz_Absenteismo_' + mesesNomeCompleto[mes] + '_' + ano + '.csv';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      });
+    }
+
+    /* ---- EXPORTAÇÃO PDF (janela de impressão) ---- */
+    if (btnPdf) {
+      btnPdf.addEventListener('click', function () {
+        garantirCalAncora();
+        var ref = getMatrizMesAno();
+        var mes = ref.mes;
+        var ano = ref.ano;
+        var tbl = document.getElementById('table-matriz');
+        if (!tbl) { renderMatrizDetalhada(); tbl = document.getElementById('table-matriz'); }
+
+        var dataRel = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        var html = '<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Matriz – ' +
+          mesesNomeCompleto[mes] + ' ' + ano + '</title>' +
+          '<style>' +
+          'body { font-family: Inter, Arial, sans-serif; font-size: 10px; margin: 24px; color: #1e293b; }' +
+          '.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; border-bottom: 3px solid #1e293b; padding-bottom: 8px; }' +
+          '.header h1 { font-size: 15px; font-weight: 900; margin: 0; color: #7f1d1d; }' +
+          '.header h2 { font-size: 12px; font-weight: 700; margin: 0; }' +
+          '.header small { color: #64748b; }' +
+          'table { width: 100%; border-collapse: collapse; }' +
+          'th, td { border: 1px solid #cbd5e1; padding: 4px 5px; text-align: center; white-space: nowrap; }' +
+          'thead th { background: #1e293b !important; color: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
+          'tbody tr th { background: #f1f5f9 !important; text-align: left; font-weight: 700; min-width: 160px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
+          '.cell--verde { background: #d1fae5 !important; color: #065f46 !important; font-weight: 700; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
+          '.cell--vermelho { background: #fee2e2 !important; color: #991b1b !important; font-weight: 700; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
+          '.row-acumulado th, .row-acumulado td { background: #1e293b !important; color: #f0f9ff !important; font-weight: 900; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
+          '@page { size: A4 landscape; margin: 1cm; }' +
+          '</style></head><body>' +
+          '<div class="header">' +
+          '<div><h1>OMEGA SERVICE · RH</h1><small>Relatório gerado em ' + dataRel + '</small></div>' +
+          '<h2>Matriz Detalhada de Absenteísmo<br><small>' + mesesNomeCompleto[mes] + ' / ' + ano + '</small></h2>' +
+          '</div>' +
+          tbl.outerHTML +
+          '</body></html>';
+
+        var win = window.open('', '_blank', 'width=1100,height=700');
+        if (!win) return;
+        win.document.write(html);
+        win.document.close();
+        win.focus();
+        setTimeout(function () { win.print(); }, 600);
+      });
+    }
+  }
+
   // RANKING DE COLABORADORES
+
   function escapeHtml(v) {
     return String(v == null ? '' : v)
       .replace(/&/g, '&amp;')
@@ -1625,10 +2126,10 @@
       var rotuloExibicao = item.rotulo || (pctBr(item.percentual) + ' (' + item.faltas + 'f)');
       html +=
         '<div class="ranking-item' + (selecionado ? ' ranking-item--selected' : '') + '"' +
-          ' data-nome="' + nome + '" title="Clique para filtrar o dashboard">' +
-          '<span class="ranking-item__pos">#' + (idx + 1) + '</span>' +
-          '<span class="ranking-item__name">' + nome + '</span>' +
-          '<span class="ranking-item__val">' + rotuloExibicao + '</span>' +
+        ' data-nome="' + nome + '" title="Clique para filtrar o dashboard">' +
+        '<span class="ranking-item__pos">#' + (idx + 1) + '</span>' +
+        '<span class="ranking-item__name">' + nome + '</span>' +
+        '<span class="ranking-item__val">' + rotuloExibicao + '</span>' +
         '</div>';
     });
     html += '</div>';
@@ -1685,7 +2186,7 @@
               '<td>' + item.faltas + '</td>' +
               '<td>' + item.previstos + '</td>' +
               '<td><span class="text-danger fw-bold">' + rotuloExibicao + '</span></td>' +
-            '</tr>';
+              '</tr>';
           }).join('');
         }
         modal.classList.add('open', 'active', 'show');
@@ -1898,15 +2399,15 @@
 
     var html =
       '<div class="t-kpi" data-level="' + levelG + '">' +
-        '<span class="t-kpi__label">Turnover Geral (Com Contratual)</span>' +
-        '<span class="t-kpi__value">' + pctBr(geral) + '</span>' +
-        '<span class="t-kpi__meta">' + totalDeslig + ' desligamentos · Efetivo Ativo Médio: ' +
-          efetivoMedio.toFixed(1) + ' · Meta ≤ ' + pctBr(metaG) + '</span>' +
+      '<span class="t-kpi__label">Turnover Geral (Com Contratual)</span>' +
+      '<span class="t-kpi__value">' + pctBr(geral) + '</span>' +
+      '<span class="t-kpi__meta">' + totalDeslig + ' desligamentos · Efetivo Ativo Médio: ' +
+      efetivoMedio.toFixed(1) + ' · Meta ≤ ' + pctBr(metaG) + '</span>' +
       '</div>' +
       '<div class="t-kpi" data-level="' + levelO + '">' +
-        '<span class="t-kpi__label">Turnover Operacional (Gerenciável)</span>' +
-        '<span class="t-kpi__value">' + pctBr(oper) + '</span>' +
-        '<span class="t-kpi__meta">' + operCount + ' deslig. operacionais · Meta ≤ ' + pctBr(metaO) + '</span>' +
+      '<span class="t-kpi__label">Turnover Operacional (Gerenciável)</span>' +
+      '<span class="t-kpi__value">' + pctBr(oper) + '</span>' +
+      '<span class="t-kpi__meta">' + operCount + ' deslig. operacionais · Meta ≤ ' + pctBr(metaO) + '</span>' +
       '</div>';
 
     if (el.dataset.sig !== html) {
@@ -2449,7 +2950,7 @@
         '<td>' + dataFmt + '</td>' +
         '<td>' + (d.motivo || '—') + '</td>' +
         '<td><span class="badge ' + badgeClass + '">' + (d.classificacao || '—') + '</span></td>' +
-      '</tr>';
+        '</tr>';
     }).join('');
   }
 
@@ -2513,5 +3014,9 @@
 
   // Modal Ômega (setOmegaProgress/showOmegaSuccess/closeOmegaLoader) vive em
   // js/omega-loader.js — compartilhado com tratamento.html.
+
+  // Inicializa o toggle de visão Calendário ↔ Matriz e os botões de exportação
+  setupCalViewToggle();
+  setupMatrizExport();
 
 })();

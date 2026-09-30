@@ -1397,6 +1397,40 @@ body.pdf-export .eng-topnav,
   font-variant-numeric: tabular-nums;
 }
 
+/* BOTÃO LIMPAR FILTROS */
+.btn-limpar-filtros {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: transparent;
+  color: var(--rhub-vinho, #7f1d1d);
+  border: 1.5px solid var(--rhub-vinho, #7f1d1d);
+  border-radius: 8px;
+  padding: 0.22rem 0.65rem;
+  font-size: 0.73rem;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+  flex-shrink: 0;
+}
+
+.btn-limpar-filtros:hover {
+  background: var(--rhub-vinho, #7f1d1d);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(127,29,29,0.18);
+}
+
+.btn-limpar-filtros i {
+  font-size: 0.8rem;
+}
+
+@media print {
+  .btn-limpar-filtros { display: none; }
+}
+
 /* CONTEÚDO PRINCIPAL DO DASHBOARD */
 .rhub-main {
   flex: 1;
@@ -1668,6 +1702,87 @@ body.pdf-export .eng-topnav,
 .dot--amarelo { background: #f59e0b; }
 .dot--vermelho { background: #ef4444; }
 .dot--neutro { background: #cbd5e1; }
+
+/* ===== TOGGLE DE VISÃO DO CALENDÁRIO ===== */
+.btn-group { display: inline-flex; border-radius: 6px; overflow: hidden; }
+.btn-group .btn { border-radius: 0; border: 1px solid var(--gray-300); font-size: 0.72rem; padding: 4px 10px; }
+.btn-group .btn:first-child { border-radius: 6px 0 0 6px; }
+.btn-group .btn:last-child { border-radius: 0 6px 6px 0; }
+.btn-group .btn.active { background: var(--rhub-vinho); color: #fff; border-color: var(--rhub-vinho); }
+
+#matriz-actions { display: none; align-items: center; gap: 4px; }
+.btn-outline-success { color: #166534; border: 1px solid #16a34a; background: transparent; font-size: 0.72rem; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
+.btn-outline-success:hover { background: #dcfce7; }
+.btn-outline-danger  { color: #991b1b; border: 1px solid #dc2626; background: transparent; font-size: 0.72rem; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
+.btn-outline-danger:hover  { background: #fee2e2; }
+
+/* ===== TABELA MATRIZ DETALHADA ===== */
+.table-matriz {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: 0.7rem;
+  font-family: 'Inter', sans-serif;
+}
+
+.table-matriz th,
+.table-matriz td {
+  border: 1px solid #e2e8f0;
+  padding: 5px 6px;
+  text-align: center;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.table-matriz thead th {
+  background: #1e293b;
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.table-matriz thead tr:nth-child(2) th {
+  background: #334155;
+  font-size: 0.65rem;
+  font-weight: 600;
+}
+
+.table-matriz tbody tr th {
+  background: #f8fafc;
+  font-weight: 700;
+  color: #334155;
+  text-align: left;
+  min-width: 170px;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  border-right: 2px solid #cbd5e1;
+}
+
+.table-matriz tbody tr:hover { background: #f1f5f9; }
+.table-matriz td.col--fim-semana { background: #f1f5f9 !important; }
+.table-matriz td.col--feriado { background: #eff6ff !important; border-color: #93c5fd !important; }
+.table-matriz td.col--compensado { background: #fffbeb !important; border-color: #fcd34d !important; }
+
+.table-matriz td.cell--verde   { background: #d1fae5; color: #065f46; font-weight: 700; }
+.table-matriz td.cell--amarelo { background: #fef3c7; color: #92400e; font-weight: 700; }
+.table-matriz td.cell--vermelho{ background: #fee2e2; color: #991b1b; font-weight: 700; }
+.table-matriz td.cell--neutro  { background: #f8fafc; color: #94a3b8; }
+
+.table-matriz tr.row-acumulado th,
+.table-matriz tr.row-acumulado td {
+  border-top: 3px double #334155;
+  background: #1e293b !important;
+  color: #f0f9ff !important;
+  font-weight: 800;
+  font-size: 0.7rem;
+}
+
+
 
 .absenteeism-bottom-row {
   display: grid;

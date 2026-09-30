@@ -473,6 +473,7 @@ async function getKpisAgregados(dataInicio, dataFim, filtros, skip) {
         COALESCE(TRIM(ph.nome_funcionario), '') AS nome_funcionario,
         COALESCE(TRIM(ph.cargo), '')            AS cargo,
         COALESCE(TRIM(ph.status), '')           AS status_raw,
+        COALESCE(cal.tipo_dia, 'UTIL')          AS tipo_dia,
         CASE
           WHEN UPPER(TRIM(ph.status)) = ANY(${ addParam(FALTAS) }::text[])    THEN 'falta'
           WHEN UPPER(TRIM(ph.status)) = ANY(${ addParam(PRESENCAS) }::text[]) THEN 'presenca'
@@ -483,16 +484,20 @@ async function getKpisAgregados(dataInicio, dataFim, filtros, skip) {
       LEFT JOIN calendario_operacional cal
         ON cal.data = ph.data_registro::date
       WHERE ph.data_registro BETWEEN $1 AND $2
-        AND COALESCE(cal.tipo_dia, 'UTIL') = 'UTIL'
         ${extraWhere}
     ),
     contaveis AS (
-      SELECT * FROM base WHERE classe <> 'excluido'
+      SELECT * FROM base
     )
     SELECT
       -- Totais globais (KPI geral de absenteísmo)
-      SUM(CASE WHEN classe = 'falta' THEN 1 ELSE 0 END)::int     AS total_faltas,
-      COUNT(*)::int                                                AS total_previstos,
+      SUM(CASE WHEN tipo_dia = 'UTIL' AND classe = 'falta' THEN 1 ELSE 0 END)::int AS total_faltas,
+      SUM(CASE WHEN tipo_dia = 'UTIL' AND classe <> 'excluido' THEN 1 ELSE 0 END)::int AS total_previstos,
+      SUM(CASE WHEN classe = 'falta' THEN 1 ELSE 0 END)::int AS cal_faltas,
+      SUM(CASE WHEN classe <> 'excluido' THEN 1 ELSE 0 END)::int AS cal_previstos,
+      SUM(CASE WHEN UPPER(TRIM(status_raw)) = 'INSS' OR UPPER(TRIM(status_raw)) = 'LICENCA INSS' THEN 1 ELSE 0 END)::int AS total_inss,
+      SUM(CASE WHEN UPPER(TRIM(status_raw)) = 'FÉRIAS' OR UPPER(TRIM(status_raw)) = 'FERIAS' THEN 1 ELSE 0 END)::int AS total_ferias,
+      SUM(CASE WHEN UPPER(TRIM(status_raw)) = 'LICENÇA MATERNIDADE' OR UPPER(TRIM(status_raw)) = 'LICENCA MATERNIDADE' THEN 1 ELSE 0 END)::int AS total_maternidade,
       -- Por status (rosca de justificativas — inclui apenas faltas)
       status_raw,
       -- Por dia

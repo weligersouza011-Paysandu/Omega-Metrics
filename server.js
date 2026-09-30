@@ -47,6 +47,8 @@ function parseAgregados(rows) {
   for (const r of (rows || [])) {
     const faltas    = parseInt(r.total_faltas || r.faltas || 0, 10);
     const previstos = parseInt(r.total_previstos || r.previstos || 0, 10);
+    const calFaltas = parseInt(r.cal_faltas || r.total_faltas || r.faltas || 0, 10);
+    const calPrevistos = parseInt(r.cal_previstos || r.total_previstos || r.previstos || 0, 10);
     const hasStatus = Boolean(r.status_raw && String(r.status_raw).trim());
     const hasData   = Boolean(r.data_registro && String(r.data_registro).trim());
     const hasMes    = Boolean(r.mes && String(r.mes).trim());
@@ -66,12 +68,15 @@ function parseAgregados(rows) {
     }
     // GROUPING SET (data_registro) → calendário
     else if (hasData && !hasStatus && !hasMes && !hasCargo && !hasNome && !chaveFunc) {
-      if (previstos > 0) {
+      if (calPrevistos > 0 || calFaltas > 0) {
         porDia.push({
           data: r.data_registro,
-          faltas,
-          previstos,
-          percentual: parseFloat(((faltas / previstos) * 100).toFixed(2))
+          faltas: calFaltas,
+          previstos: calPrevistos,
+          inss: parseInt(r.total_inss || 0, 10),
+          ferias: parseInt(r.total_ferias || 0, 10),
+          maternidade: parseInt(r.total_maternidade || 0, 10),
+          percentual: calPrevistos > 0 ? parseFloat(((calFaltas / calPrevistos) * 100).toFixed(2)) : 0
         });
       }
     }
@@ -387,6 +392,60 @@ app.get('/api/dashboard/datas-disponiveis', async (req, res) => {
   }
 });
 
+app.get('/api/dashboard/detalhe-dia', async (req, res) => {
+  try {
+    const { dia, status, funcao, colaborador } = req.query;
+    if (!dia) return res.status(400).json({ success: false, error: 'Parâmetro dia é obrigatório.' });
+
+    const params = [dia];
+    let whereClauses = ['data_registro = $1'];
+    let idx = 2;
+
+    if (status && status.trim()) {
+      whereClauses.push(`UPPER(TRIM(status)) = $${idx++}`);
+      params.push(status.trim().toUpperCase());
+    }
+    if (funcao && funcao.trim()) {
+      whereClauses.push(`UPPER(TRIM(cargo)) = $${idx++}`);
+      params.push(funcao.trim().toUpperCase());
+    }
+    if (colaborador && colaborador.trim()) {
+      whereClauses.push(`UPPER(TRIM(nome_funcionario)) = $${idx++}`);
+      params.push(colaborador.trim().toUpperCase());
+    }
+
+    const query = `
+      SELECT
+        matricula,
+        nome_funcionario,
+        status,
+        COALESCE(cid, observacao, '') AS justificativa
+      FROM ponto_historico
+      WHERE ${whereClauses.join(' AND ')}
+      ORDER BY nome_funcionario
+    `;
+    
+    // We try CID or Observacao, if one doesn't exist it might fail, let's just ask for cid if that's what's mapped, or just cid
+    // The previous parsing maps 'cid' directly.
+    const safeQuery = `
+      SELECT
+        matricula,
+        nome_funcionario,
+        status,
+        COALESCE(cid, '') AS justificativa
+      FROM ponto_historico
+      WHERE ${whereClauses.join(' AND ')}
+      ORDER BY nome_funcionario
+    `;
+
+    const result = await pool.query(safeQuery, params);
+    return res.json({ success: true, dia, dados: result.rows });
+  } catch (err) {
+    console.error('Erro ao buscar detalhe do dia:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.get('/api/dashboard/kpis', async (req, res) => {
   try {
     const { dataInicio, dataFim, status, dia, mes, colaborador, funcao, motivo } = req.query;
@@ -509,10 +568,22 @@ app.get('/api/dashboard/kpis', async (req, res) => {
     const end = new Date(dataFim);
     for (let d = new Date(begin); d <= end; d = new Date(d.getTime() + 86400000)) {
       const iso = d.toISOString().slice(0, 10);
-      const rowData = sqlDiaMap.get(iso) || { data: iso, faltas: 0, previstos: 0, percentual: 0 };
+      const rowData = sqlDiaMap.get(iso) || { data: iso, faltas: 0, previstos: 0, percentual: 0, inss: 0, ferias: 0, maternidade: 0 };
+      const tipoDia = tiposMap.get(iso) || 'UTIL';
+      const presentes = rowData.previstos - rowData.faltas;
+      
+      let statusCor = 'neutro';
+      if (rowData.previstos > 0 || rowData.faltas > 0) {
+        if (rowData.percentual <= 3.0) statusCor = 'verde';
+        else if (rowData.percentual <= 4.0) statusCor = 'amarelo';
+        else statusCor = 'vermelho';
+      }
+
       diasCompletos.push({
         ...rowData,
-        tipo_dia: tiposMap.get(iso) || 'UTIL'
+        tipo_dia: tipoDia,
+        presentes: presentes,
+        status_cor: statusCor
       });
     }
     graficos.absenteismoPorDia = diasCompletos;

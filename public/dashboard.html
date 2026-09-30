@@ -155,6 +155,10 @@
         <span class="day-chip__text" id="cross-filter-chip-text">—</span>
         <button type="button" class="day-chip__x" id="cross-chip-clear" aria-label="Limpar filtros cruzados">&times;</button>
       </span>
+      <button type="button" class="btn-limpar-filtros" id="btn-limpar-filtros" title="Limpar todos os filtros e voltar ao período padrão">
+        <i class="bi bi-eraser-fill"></i>
+        <span>Limpar Filtros</span>
+      </button>
     </div>
 
     <div class="rhub-filters__slider">
@@ -218,20 +222,59 @@
               <i class="bi bi-calendar3-event"></i>
               Calendário de Absenteísmo
             </span>
-            <div class="rhub-cal-controls no-print">
-              <button type="button" class="rhub-cal-nav" id="cal-prev" title="Meses anteriores">&lsaquo;</button>
-              <button type="button" class="rhub-cal-nav" id="cal-next" title="Próximos meses">&rsaquo;</button>
-              <button type="button" class="btn btn-sm btn-outline" id="cal-ano" title="Voltar para os 12 meses até o mês atual">Período atual</button>
+            <div class="rhub-cal-controls no-print" style="display:flex; align-items:center; gap: 8px;">
+              <div class="btn-group btn-group-sm" role="group">
+                <button type="button" class="btn btn-outline active" id="btn-view-cal">📅 Calendário</button>
+                <button type="button" class="btn btn-outline" id="btn-view-matriz">📊 Matriz Detalhada</button>
+              </div>
+              <div id="matriz-actions" style="display:none; gap: 4px;">
+                <button type="button" class="btn btn-sm btn-outline-success" id="btn-export-matriz-excel" title="Exportar Excel">
+                  <i class="bi bi-file-earmark-excel"></i> Excel
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-danger" id="btn-export-matriz-pdf" title="Exportar PDF">
+                  <i class="bi bi-file-earmark-pdf"></i> PDF
+                </button>
+              </div>
+              <div style="display:flex; align-items:center;">
+                <button type="button" class="rhub-cal-nav" id="cal-prev" title="Meses anteriores">&lsaquo;</button>
+                <button type="button" class="rhub-cal-nav" id="cal-next" title="Próximos meses">&rsaquo;</button>
+                <button type="button" class="btn btn-sm btn-outline" id="cal-ano" title="Voltar para os 12 meses até o mês atual">Período atual</button>
+              </div>
             </div>
           </div>
-          <div class="rhub-cal-body">
+          <div class="rhub-cal-body" style="position: relative; display: flex; flex-direction: column;">
             <div class="rhub-cal-grid" id="calendario"></div>
-            <div class="rhub-cal-legend">
+            <div class="rhub-cal-legend" id="calendario-legend">
               <span><span class="dot dot--verde"></span> / <span class="dot dot--vermelho"></span> = Taxa de Absenteísmo (ok / limite)</span>
               <span><span class="dot" style="border: 2px solid #2563eb; background: transparent;"></span>Feriado</span>
               <span><span class="dot" style="border: 2px solid #d97706; background: transparent;"></span>Compensado / Ponte</span>
               <span><span class="dot dot--neutro"></span>Sem dados</span>
               <span class="text-muted"><i class="bi bi-hand-index-thumb"></i> Clique em um dia para filtrar</span>
+            </div>
+            <div id="matriz-container" style="display: none; width: 100%; flex: 1; overflow: auto; padding: 0.5rem; flex-direction: column;">
+              <table class="table-matriz" id="table-matriz">
+                <thead></thead>
+                <tbody></tbody>
+              </table>
+              <div id="matriz-drilldown" style="display: none; margin-top: 1rem; flex-shrink: 0;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                  <h4 id="matriz-drilldown-title" style="font-size: 0.9rem; font-weight: 700; margin: 0;">Detalhamento de Ocorrências</h4>
+                  <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-close-drilldown" style="font-size: 0.7rem; padding: 2px 6px;">✕ Fechar</button>
+                </div>
+                <div class="table-responsive" style="max-height: 250px; overflow-y: auto;">
+                  <table class="table table-sm table-striped" id="table-drilldown" style="font-size: 0.75rem;">
+                    <thead>
+                      <tr>
+                        <th>Matrícula</th>
+                        <th>Nome</th>
+                        <th>Status do Dia</th>
+                        <th>Justificativa/Observação</th>
+                      </tr>
+                    </thead>
+                    <tbody></tbody>
+                  </table>
+                </div>
+              </div>
             </div>
           </div>
         </div>
