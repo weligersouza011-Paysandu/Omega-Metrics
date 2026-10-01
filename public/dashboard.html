@@ -252,6 +252,11 @@
               <span class="text-muted"><i class="bi bi-hand-index-thumb"></i> Clique em um dia para filtrar</span>
             </div>
             <div id="matriz-container" style="display: none; width: 100%; flex: 1; overflow: auto; padding: 0.5rem; flex-direction: column;">
+              <div class="rhub-cal-legend" id="matriz-legend" style="position: sticky; top: 0; z-index: 6; background: var(--white, #fff); margin-bottom: 0.4rem; padding: 2px 0; font-size: 0.7rem;">
+                <span><span class="matriz-tag matriz-tag--feriado">🏖️ FERIADO</span> indicadores zerados e não contabilizados no mês</span>
+                <span><span class="matriz-tag matriz-tag--compensado">🔄 COMPENSADO / PONTO FACULTATIVO</span> idem</span>
+                <span class="text-muted"><i class="bi bi-calendar-week"></i> Fonte: Calendário Operacional do sistema (a badge mostra a descrição cadastrada) — Sáb/Dom ocultos (somente Seg a Sex)</span>
+              </div>
               <table class="table-matriz" id="table-matriz">
                 <thead></thead>
                 <tbody></tbody>

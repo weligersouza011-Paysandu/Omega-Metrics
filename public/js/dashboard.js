@@ -1728,28 +1728,206 @@
     return { mes: d.getMonth(), ano: d.getFullYear() };
   }
 
+  /* ============================================================
+     CALENDÁRIO OPERACIONAL DO SISTEMA (fonte única da Matriz)
+     A Matriz NÃO usa feriados estáticos nem calendários externos:
+     consulta GET /api/calendario-operacional (tabela
+     calendario_operacional), preenchida pelo próprio usuário
+     (feriado, aniversário da cidade, ponte/compensado etc.).
+     ============================================================ */
+  var CAL_MATRIZ_TTL_MS = 30000;
+  var calMatrizCache = { chave: null, dados: null, ts: 0, promessa: null };
+  // chave (ano-mes) do DOM da Matriz — evita exportar uma versão não renderizada
+  var matrizRenderMesChave = null;
+
+  /**
+   * carregarCalendarioMatriz(mes 0-11, ano) → Promise<{
+   *   'YYYY-MM-DD': { tipo_dia, descricao }
+   * }>
+   * Resolve com null quando o endpoint falha (aí a Matriz usa o
+   * enriquecimento de tipo_dia/dia_descricao vindo dos KPIs).
+   */
+  function carregarCalendarioMatriz(mes, ano) {
+    var chave = ano + '-' + (mes + 1);
+    if (calMatrizCache.chave === chave && calMatrizCache.promessa) {
+      return calMatrizCache.promessa;
+    }
+    if (calMatrizCache.chave === chave && calMatrizCache.dados &&
+        (Date.now() - calMatrizCache.ts) < CAL_MATRIZ_TTL_MS) {
+      return Promise.resolve(calMatrizCache.dados);
+    }
+
+    calMatrizCache.chave = chave;
+    calMatrizCache.promessa = fetch(API_URL + '/api/calendario-operacional?mes=' + (mes + 1) + '&ano=' + ano)
+      .then(function (resp) { return resp.json(); })
+      .then(function (payload) {
+        // A navegação mudou de mês enquanto este fetch estava em voo
+        if (calMatrizCache.chave !== chave) return null;
+        calMatrizCache.promessa = null;
+        if (!payload || !payload.success || !Array.isArray(payload.dias)) return null;
+        var mapa = {};
+        payload.dias.forEach(function (dia) {
+          if (dia && dia.data) {
+            mapa[dia.data] = { tipo_dia: dia.tipo_dia, descricao: dia.descricao || '' };
+          }
+        });
+        calMatrizCache.dados = mapa;
+        calMatrizCache.ts = Date.now();
+        return mapa;
+      })
+      .catch(function (err) {
+        if (calMatrizCache.chave === chave) calMatrizCache.promessa = null;
+        console.warn('[Matriz] Falha ao consultar o Calendário Operacional:', err);
+        return null;
+      });
+
+    return calMatrizCache.promessa;
+  }
+
+  // Tipo do dia conforme o Calendário Operacional do mês exibido.
+  // calOK = endpoint respondeu → ele é a fonte oficial; senão, usa
+  // o tipo_dia que o servidor já embutiu em absenteismoPorDia.
+  function tipoEventoDia(item) {
+    if (item.calOK) return item.ev ? item.ev.tipo_dia : null;
+    return item.reg ? item.reg.tipo_dia : null;
+  }
+
+  function descricaoEventoDia(item) {
+    if (item.ev) return item.ev.descricao || '';
+    if (item.calOK) return ''; // endpoint respondeu e não há registro nesse dia
+    return (item.reg && item.reg.dia_descricao) || '';
+  }
+
+  // 'FERIADO' | 'COMPENSADO' | 'UTEIS'
+  // Evento = registro no Calendário Operacional que NÃO é dia útil
+  // (registros 'UTIL' são dias de trabalho trabalhado e não zeram nada)
+  function classificarDiaMatriz(item) {
+    if (item.cls) return item.cls;
+    var tipo = tipoEventoDia(item);
+    if (tipo === 'FERIADO') return 'FERIADO';
+    if (tipo === 'COMPENSADO' || tipo === 'FOLGA') return 'COMPENSADO';
+    return 'UTEIS';
+  }
+
+  // Zera os indicadores operacionais das colunas com evento no calendário
+  function zerarRegDiaNaoUtil(item) {
+    var original = item.reg || {};
+    return {
+      data: item.iso,
+      faltas: 0,
+      previstos: 0,
+      presentes: 0,
+      percentual: 0,
+      inss: 0,
+      ferias: 0,
+      maternidade: 0,
+      tipo_dia: (item.ev && item.ev.tipo_dia) || original.tipo_dia || (item.cls === 'FERIADO' ? 'FERIADO' : 'COMPENSADO'),
+      dia_descricao: descricaoEventoDia(item),
+      status_cor: 'neutro',
+      dia_zerado: true
+    };
+  }
+
+  // Agrupa dias visíveis consecutivos do mesmo tipo (ex.: Carnaval 16→18/02)
+  function agruparDiasTag(dias) {
+    var grupos = [];
+    dias.forEach(function (item) {
+      var cls = classificarDiaMatriz(item);
+      var ultimo = grupos[grupos.length - 1];
+      var continua = ultimo && ultimo.cls === cls && cls !== 'UTEIS' &&
+        (Date.parse(item.iso) - Date.parse(ultimo.fim)) === 86400000;
+      if (continua) {
+        ultimo.fim = item.iso;
+        ultimo.qtd += 1;
+        if (!ultimo.descricao) ultimo.descricao = descricaoEventoDia(item);
+      } else {
+        grupos.push({
+          cls: cls,
+          inicio: item.iso,
+          fim: item.iso,
+          qtd: 1,
+          descricao: descricaoEventoDia(item)
+        });
+      }
+    });
+    return grupos;
+  }
+
+  function tituloTagGrupo(g) {
+    var ini = g.inicio.split('-').reverse().slice(0, 2).join('/');
+    var fim = g.fim.split('-').reverse().slice(0, 2).join('/');
+    var periodo = g.qtd > 1 ? ini + ' a ' + fim : ini;
+    var tipo = g.cls === 'FERIADO' ? 'Feriado' : 'Compensado / Ponto Facultativo';
+    var base = periodo + ' — ' + tipo;
+    if (g.descricao) base += ' — ' + g.descricao;
+    return (g.cls === 'FERIADO' ? '🏖️ ' : '🔄 ') + base;
+  }
+
+  // Texto da badge no topo da coluna: descrição cadastrada no
+  // Calendário Operacional (ex.: Aniversário da Cidade) ou o tipo
+  function rotuloTagGrupo(g) {
+    if (g.descricao) return (g.cls === 'FERIADO' ? '🏖️ ' : '🔄 ') + g.descricao;
+    return g.cls === 'FERIADO' ? '🏖️ FERIADO' : '🔄 COMPENSADO / PONTO FACULTATIVO';
+  }
+
+  // Último render concluído (usado pelo export PDF para imprimir pronto)
+  var matrizRenderPronta = Promise.resolve();
+  // Sequência de renders — descarta respostas atrasadas de meses anteriores
+  var matrizRenderSeq = 0;
+
+  // Busca o Calendário Operacional do mês exibido e só então desenha
   function renderMatrizDetalhada() {
     var mc = document.getElementById('matriz-container');
     var tbl = document.getElementById('table-matriz');
-    if (!mc || !tbl) return;
+    if (!mc || !tbl) return matrizRenderPronta;
 
     var ref = getMatrizMesAno();
+    var seq = ++matrizRenderSeq;
+    matrizRenderPronta = carregarCalendarioMatriz(ref.mes, ref.ano)
+      .then(function (calMap) {
+        if (seq !== matrizRenderSeq) return; // navegação mais nova já assumiu
+        desenharMatriz(mc, tbl, ref, calMap);
+      })
+      .catch(function (err) {
+        console.warn('[Matriz] Erro ao montar a Matriz Detalhada:', err);
+      });
+    return matrizRenderPronta;
+  }
+
+  function desenharMatriz(mc, tbl, ref, calMap) {
     var mes = ref.mes;
     var ano = ref.ano;
+    var calOK = !!calMap; // endpoint respondeu → Calendário Operacional é a fonte
     var totalDias = new Date(ano, mes + 1, 0).getDate();
 
     // Coleta os dados do mês corrente a partir de mapPorDia
     var diasMes = [];
     for (var d = 1; d <= totalDias; d++) {
       var iso = ano + '-' + String(mes + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
-      var reg = mapPorDia[iso] || { data: iso, faltas: 0, previstos: 0, presentes: 0, percentual: 0, tipo_dia: 'UTIL', status_cor: 'neutro' };
+      var reg = mapPorDia[iso] || { data: iso, faltas: 0, previstos: 0, presentes: 0, percentual: 0, inss: 0, ferias: 0, maternidade: 0, status_cor: 'neutro' };
       var dSem = new Date(ano, mes, d).getDay(); // 0=dom, 6=sab
-      diasMes.push({ d: d, iso: iso, reg: reg, dSem: dSem });
+      diasMes.push({
+        d: d, iso: iso, reg: reg, dSem: dSem,
+        ev: calOK ? (calMap[iso] || null) : null,
+        calOK: calOK
+      });
     }
 
-    // Cálculo acumulado do mês (só dias úteis com dados)
+    // Dias exibidos: somente Seg–Sex (Sáb/Dom ficam ocultos na matriz)
+    var diasVisiveis = diasMes.filter(function (item) {
+      return item.dSem !== 0 && item.dSem !== 6;
+    });
+
+    // Colunas FERIADO / COMPENSADO: todos os indicadores operacionais = 0
+    diasVisiveis.forEach(function (item) {
+      item.cls = classificarDiaMatriz(item);
+      if (item.cls !== 'UTEIS') item.reg = zerarRegDiaNaoUtil(item);
+    });
+
+    // Cálculo acumulado do mês (somente dias úteis reais; os zerados
+    // não entram nem no numerador nem no denominador do % acumulado)
     var totalFaltas = 0, totalPrevistos = 0;
-    diasMes.forEach(function (item) {
+    diasVisiveis.forEach(function (item) {
       if (item.reg.previstos > 0 || item.reg.faltas > 0) {
         totalFaltas += item.reg.faltas || 0;
         totalPrevistos += item.reg.previstos || 0;
@@ -1763,23 +1941,51 @@
     thead.innerHTML = '';
     tbody.innerHTML = '';
 
-    // Linha 1 header: título do mês + dias
+    // Linha 1 header: tags de FERIADO / COMPENSADO (agrupadas por bloco)
+    var diasSemanas = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+    var trTags = document.createElement('tr');
+    trTags.className = 'tag-row';
+    var thTagCanto = document.createElement('th');
+    thTagCanto.textContent = '';
+    trTags.appendChild(thTagCanto);
+
+    agruparDiasTag(diasVisiveis).forEach(function (g) {
+      var th = document.createElement('th');
+      th.colSpan = g.qtd;
+      if (g.cls === 'FERIADO' || g.cls === 'COMPENSADO') {
+        var key = g.cls.toLowerCase();
+        th.classList.add('tag-cell--' + key);
+        th.title = tituloTagGrupo(g);
+        var span = document.createElement('span');
+        span.className = 'matriz-tag matriz-tag--' + key;
+        span.textContent = rotuloTagGrupo(g);
+        th.appendChild(span);
+      }
+      trTags.appendChild(th);
+    });
+
+    var thTagTot = document.createElement('th');
+    thTagTot.textContent = '';
+    trTags.appendChild(thTagTot);
+    thead.appendChild(trTags);
+
+    // Linha 2 header: título do mês + dias
     var tr1 = document.createElement('tr');
     var thTitle = document.createElement('th');
     thTitle.textContent = mesesNomeCompleto[mes] + ' / ' + ano;
     thTitle.style.textAlign = 'left';
     tr1.appendChild(thTitle);
 
-    var diasSemanas = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
-    diasMes.forEach(function (item) {
+    diasVisiveis.forEach(function (item) {
       var th = document.createElement('th');
       th.textContent = String(item.d).padStart(2, '0');
       th.dataset.iso = item.iso;
       th.style.cursor = 'pointer';
       th.title = 'Clique para ver os detalhes do dia';
-      var tipo = (item.reg && item.reg.tipo_dia) || 'UTIL';
-      if (tipo === 'FERIADO') th.style.cssText += 'background:#1e3a8a;';
-      else if (tipo === 'COMPENSADO' || item.dSem === 0 || item.dSem === 6) th.style.cssText += 'background:#92400e;';
+      var cls = classificarDiaMatriz(item);
+      if (cls === 'FERIADO') th.classList.add('col--feriado');
+      else if (cls === 'COMPENSADO') th.classList.add('col--compensado');
       tr1.appendChild(th);
     });
     // coluna de totais
@@ -1788,18 +1994,18 @@
     tr1.appendChild(thTot);
     thead.appendChild(tr1);
 
-    // Linha 2 header: dia da semana
+    // Linha 3 header: dia da semana
     var tr2 = document.createElement('tr');
     var thSub = document.createElement('th');
     thSub.textContent = 'INDICADOR';
     tr2.appendChild(thSub);
-    diasMes.forEach(function (item) {
+    diasVisiveis.forEach(function (item) {
       var th = document.createElement('th');
       th.textContent = diasSemanas[item.dSem];
-      var tipo = (item.reg && item.reg.tipo_dia) || 'UTIL';
-      if (tipo === 'FERIADO') th.style.cssText = 'background:#1e40af; font-size:0.6rem;';
-      else if (tipo === 'COMPENSADO' || item.dSem === 0 || item.dSem === 6) th.style.cssText = 'background:#b45309; font-size:0.6rem;';
-      else th.style.fontSize = '0.6rem';
+      th.style.fontSize = '0.6rem';
+      var cls = classificarDiaMatriz(item);
+      if (cls === 'FERIADO') th.classList.add('col--feriado');
+      else if (cls === 'COMPENSADO') th.classList.add('col--compensado');
       tr2.appendChild(th);
     });
     var thSubTot = document.createElement('th');
@@ -1813,17 +2019,17 @@
       var th = document.createElement('th');
       th.textContent = label;
       tr.appendChild(th);
-      diasMes.forEach(function (item) {
+      diasVisiveis.forEach(function (item) {
         var td = document.createElement('td');
         var val = valoresFn(item);
         td.textContent = val;
         td.dataset.iso = item.iso;
         td.style.cursor = 'pointer';
         td.title = 'Clique para ver os detalhes do dia';
-        var tipo = (item.reg && item.reg.tipo_dia) || 'UTIL';
+        var cls = classificarDiaMatriz(item);
         var colClass = '';
-        if (tipo === 'FERIADO') colClass = 'col--feriado';
-        else if (tipo === 'COMPENSADO') colClass = 'col--compensado';
+        if (cls === 'FERIADO') colClass = 'col--feriado';
+        else if (cls === 'COMPENSADO') colClass = 'col--compensado';
         else if (item.dSem === 0 || item.dSem === 6) colClass = 'col--fim-semana';
         if (colClass) td.classList.add(colClass);
         if (colorFn) {
@@ -1858,7 +2064,7 @@
     }));
 
     var totalInss = 0, totalFerias = 0, totalMaternidade = 0;
-    diasMes.forEach(function (item) {
+    diasVisiveis.forEach(function (item) {
       if (item.reg) {
         totalInss += item.reg.inss || 0;
         totalFerias += item.reg.ferias || 0;
@@ -1883,9 +2089,11 @@
 
     // Linha 5: % Absenteísmo Dia
     tbody.appendChild(criarLinha('📊 Aderência / Absenteísmo Dia (%)', function (item) {
+      if (item.reg && item.reg.dia_zerado) return pctBr(0);
       if (!item.reg || (item.reg.previstos === 0 && item.reg.faltas === 0)) return '—';
       return pctBr(item.reg.percentual);
     }, function () { return pctBr(acumPct); }, function (item) {
+      if (item.reg && item.reg.dia_zerado) return '';
       if (!item.reg || (item.reg.previstos === 0 && item.reg.faltas === 0)) return 'cell--neutro';
       var sc = item.reg.status_cor || '';
       if (sc === 'verde') return 'cell--verde';
@@ -1900,16 +2108,19 @@
     var thAcum = document.createElement('th');
     thAcum.textContent = '📈 Absenteísmo Acumulado Mês (%)';
     trAcum.appendChild(thAcum);
-    for (var ci = 0; ci < totalDias; ci++) {
+    for (var ci = 0; ci < diasVisiveis.length; ci++) {
       var tdAcum = document.createElement('td');
-      tdAcum.textContent = ci === totalDias - 1 ? pctBr(acumPct) : '';
-      if (ci === totalDias - 1) tdAcum.colSpan = 1;
+      tdAcum.textContent = ci === diasVisiveis.length - 1 ? pctBr(acumPct) : '';
+      if (ci === diasVisiveis.length - 1) tdAcum.colSpan = 1;
       trAcum.appendChild(tdAcum);
     }
     var tdAcumTot = document.createElement('td');
     tdAcumTot.textContent = pctBr(acumPct);
     trAcum.appendChild(tdAcumTot);
     tbody.appendChild(trAcum);
+
+    // A Matriz na tela reflete este mês (com o Calendário Operacional do mês)
+    matrizRenderMesChave = ano + '-' + mes;
 
     // Click handler for Drill-down
     tbl.onclick = function(e) {
@@ -1988,66 +2199,93 @@
         var ano = ref.ano;
         var totalDias = new Date(ano, mes + 1, 0).getDate();
 
-        var rows = [];
-        // Cabeçalho
-        var header1 = ['INDICADOR'];
-        var header2 = [''];
-        var diasSemanas = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
-        for (var d = 1; d <= totalDias; d++) {
-          header1.push(String(d).padStart(2, '0'));
-          var dSem = new Date(ano, mes, d).getDay();
-          header2.push(diasSemanas[dSem]);
-        }
-        header1.push('TOTAL');
-        header2.push('MÊS');
-        rows.push(header1.join(';'));
-        rows.push(header2.join(';'));
+        // Mesma fonte da Matriz na tela: Calendário Operacional do mês exportado
+        carregarCalendarioMatriz(mes, ano).then(function (calMap) {
+          var calOK = !!calMap;
 
-        var labels = ['Efetivo Previsto', 'Efetivo Real (Presentes)', 'Ausentes (Faltas)', 'INSS', 'Férias', 'Licença Maternidade', '% Absenteísmo Dia'];
-        var getters = [
-          function (reg) { return reg.previstos || 0; },
-          function (reg) { return reg.presentes || (reg.previstos - reg.faltas) || 0; },
-          function (reg) { return reg.faltas || 0; },
-          function (reg) { return reg.inss || 0; },
-          function (reg) { return reg.ferias || 0; },
-          function (reg) { return reg.maternidade || 0; },
-          function (reg) { return (reg.previstos > 0 || reg.faltas > 0) ? pctBr(reg.percentual) : '—'; }
-        ];
+          var diasSemanas = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+          var diasVisiveisE = [];
+          for (var d = 1; d <= totalDias; d++) {
+            var dSem = new Date(ano, mes, d).getDay();
+            if (dSem === 0 || dSem === 6) continue; // só Seg–Sex
+            var iso = ano + '-' + String(mes + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+            var reg = mapPorDia[iso] || { faltas: 0, previstos: 0, presentes: 0, percentual: 0, inss: 0, ferias: 0, maternidade: 0 };
+            diasVisiveisE.push({
+              iso: iso, dSem: dSem, reg: reg,
+              ev: calOK ? (calMap[iso] || null) : null,
+              calOK: calOK
+            });
+          }
 
-        var totalFaltasE = 0, totalPrevistoE = 0, totalInssE = 0, totalFeriasE = 0, totalMaternidadeE = 0;
-        var diasArr = [];
-        for (var d2 = 1; d2 <= totalDias; d2++) {
-          var iso = ano + '-' + String(mes + 1).padStart(2, '0') + '-' + String(d2).padStart(2, '0');
-          var reg = mapPorDia[iso] || { faltas: 0, previstos: 0, presentes: 0, percentual: 0, inss: 0, ferias: 0, maternidade: 0 };
-          diasArr.push(reg);
-          totalFaltasE += reg.faltas || 0;
-          totalPrevistoE += reg.previstos || 0;
-          totalInssE += reg.inss || 0;
-          totalFeriasE += reg.ferias || 0;
-          totalMaternidadeE += reg.maternidade || 0;
-        }
-        var acumPctE = totalPrevistoE > 0 ? (totalFaltasE / totalPrevistoE * 100).toFixed(2).replace('.', ',') + '%' : '0,00%';
-        var totais = [totalPrevistoE, totalPrevistoE - totalFaltasE, totalFaltasE, totalInssE, totalFeriasE, totalMaternidadeE, acumPctE];
+          // Colunas com evento no calendário: indicadores zerados
+          diasVisiveisE.forEach(function (item) {
+            item.cls = classificarDiaMatriz(item);
+            if (item.cls !== 'UTEIS') item.reg = zerarRegDiaNaoUtil(item);
+          });
 
-        labels.forEach(function (lbl, li) {
-          var row = [lbl];
-          diasArr.forEach(function (reg) { row.push(getters[li](reg)); });
-          row.push(totais[li]);
-          rows.push(row.join(';'));
+          var rows = [];
+          // Cabeçalho (dia, dia da semana e tipo do dia)
+          var header1 = ['INDICADOR'];
+          var header2 = [''];
+          var header3 = ['Tipo do dia'];
+          diasVisiveisE.forEach(function (item) {
+            header1.push(item.iso.slice(8, 10));
+            header2.push(diasSemanas[item.dSem]);
+            var cls = classificarDiaMatriz(item);
+            header3.push(cls === 'UTEIS' ? 'ÚTIL' : cls);
+          });
+          header1.push('TOTAL');
+          header2.push('MÊS');
+          header3.push('');
+          rows.push(header1.join(';'));
+          rows.push(header2.join(';'));
+          rows.push(header3.join(';'));
+
+          var labels = ['Efetivo Previsto', 'Efetivo Real (Presentes)', 'Ausentes (Faltas)', 'INSS', 'Férias', 'Licença Maternidade', '% Absenteísmo Dia'];
+          var getters = [
+            function (reg) { return reg.previstos || 0; },
+            function (reg) { return reg.presentes || (reg.previstos - reg.faltas) || 0; },
+            function (reg) { return reg.faltas || 0; },
+            function (reg) { return reg.inss || 0; },
+            function (reg) { return reg.ferias || 0; },
+            function (reg) { return reg.maternidade || 0; },
+            function (reg) { return reg.dia_zerado ? pctBr(0) : ((reg.previstos > 0 || reg.faltas > 0) ? pctBr(reg.percentual) : '—'); }
+          ];
+
+          var totalFaltasE = 0, totalPrevistoE = 0, totalInssE = 0, totalFeriasE = 0, totalMaternidadeE = 0;
+          var diasArr = [];
+          diasVisiveisE.forEach(function (item) {
+            var regE = item.reg;
+            diasArr.push(regE);
+            totalFaltasE += regE.faltas || 0;
+            totalPrevistoE += regE.previstos || 0;
+            totalInssE += regE.inss || 0;
+            totalFeriasE += regE.ferias || 0;
+            totalMaternidadeE += regE.maternidade || 0;
+          });
+          var acumPctE = totalPrevistoE > 0 ? (totalFaltasE / totalPrevistoE * 100).toFixed(2).replace('.', ',') + '%' : '0,00%';
+          var totais = [totalPrevistoE, totalPrevistoE - totalFaltasE, totalFaltasE, totalInssE, totalFeriasE, totalMaternidadeE, acumPctE];
+
+          labels.forEach(function (lbl, li) {
+            var row = [lbl];
+            diasArr.forEach(function (reg) { row.push(getters[li](reg)); });
+            row.push(totais[li]);
+            rows.push(row.join(';'));
+          });
+
+          rows.push(['Absenteísmo Acumulado Mês (%)'].concat(new Array(diasVisiveisE.length).fill('')).concat([acumPctE]).join(';'));
+
+          var bom = '\uFEFF';
+          var blob = new Blob([bom + rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url;
+          a.download = 'Matriz_Absenteismo_' + mesesNomeCompleto[mes] + '_' + ano + '.csv';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
         });
-
-        rows.push(['Absenteísmo Acumulado Mês (%)'].concat(new Array(totalDias).fill('')).concat([acumPctE]).join(';'));
-
-        var bom = '\uFEFF';
-        var blob = new Blob([bom + rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        a.href = url;
-        a.download = 'Matriz_Absenteismo_' + mesesNomeCompleto[mes] + '_' + ano + '.csv';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
       });
     }
 
@@ -2059,7 +2297,11 @@
         var mes = ref.mes;
         var ano = ref.ano;
         var tbl = document.getElementById('table-matriz');
-        if (!tbl) { renderMatrizDetalhada(); tbl = document.getElementById('table-matriz'); }
+        // Só imprime a versão já desenhada com o Calendário Operacional do mês
+        if (!tbl || matrizRenderMesChave !== (ano + '-' + mes)) {
+          renderMatrizDetalhada();
+          return;
+        }
 
         var dataRel = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
         var html = '<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Matriz – ' +
@@ -2076,6 +2318,10 @@
           'tbody tr th { background: #f1f5f9 !important; text-align: left; font-weight: 700; min-width: 160px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
           '.cell--verde { background: #d1fae5 !important; color: #065f46 !important; font-weight: 700; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
           '.cell--vermelho { background: #fee2e2 !important; color: #991b1b !important; font-weight: 700; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
+          '.table-matriz td.col--feriado, .table-matriz td.col--compensado, .table-matriz thead th.col--feriado, .table-matriz thead th.col--compensado { background: #fef3c7 !important; color: #92400e !important; border-color: #fcd34d !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
+          '.matriz-tag { font-size: 6px; font-weight: 800; padding: 1px 3px; border-radius: 3px; white-space: nowrap; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
+          '.matriz-tag--feriado { background: #1e3a8a !important; color: #fff !important; }' +
+          '.matriz-tag--compensado { background: #b45309 !important; color: #fff !important; }' +
           '.row-acumulado th, .row-acumulado td { background: #1e293b !important; color: #f0f9ff !important; font-weight: 900; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
           '@page { size: A4 landscape; margin: 1cm; }' +
           '</style></head><body>' +

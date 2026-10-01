@@ -17,8 +17,9 @@ const { initDatabase, createLote, getLote, confirmLote,
   upsertPontoHistorico, insertDesligamentosJustificados, updateCalendario,
   getPontoHistorico, getPontoParaTurnover, getKpisAgregados,
   getDesligamentosHistorico, getCalendarioDatas,
-  getCalendarioOperacional, upsertDiaOperacional, gerarCalendarioAno,
-  getPeriodoLimites, getEfetivoTotal, getTipoDiasPorPeriodo,
+  getCalendarioOperacional, getCalendarioPeriodoMapa, getCalendarioAno,
+  upsertDiaOperacional, gerarCalendarioAno,
+  getPeriodoLimites, getEfetivoTotal,
   countByDate, getByDate, deleteByDate, formatHorarioValue, verificarMatriculasNovas, updatePontoBatch } = require('./src/database/dbService');
 
 const { parseExcelFiles, validateData, validatePontoRow, applyCorrecoes, toPontoDataShape, toDesligDataShape, calculateMetrics, formatExcelDate, excelDecimalToTime, STATUS_CONFIG, STATUS_ALIASES, getStatusMeta, calcularAbsenteismo, calcEfetivoAtivoPorMes, calcTurnoverMensal, calcTurnoverPorFuncao, applyCrossFilters, applyCrossFiltersDeslig, temFiltro, META_TURNOVER_GERAL, META_TURNOVER_OPERACIONAL, MOTIVOS_TURNOVER_RELEVANTES } = require('./src/services/tratamentoService');
@@ -557,9 +558,8 @@ app.get('/api/dashboard/kpis', async (req, res) => {
     graficos.absenteismoPorStatus = sqlStatus.porStatus;  // rosca (skip=status)
     graficos.absenteismoPorMes    = sqlMes.porMes;        // gráfico mês (skip=mes)
 
-    // Calendário (skip=dia): precisa de todos os dias do período com seus tipo_dia
-    const tiposPeriodo = await getTipoDiasPorPeriodo(dataInicio, dataFim);
-    const tiposMap = new Map(tiposPeriodo.map(t => [t.data, t.tipo_dia]));
+    // Calendário (skip=dia): UMA query de intervalo → Map<data, meta> (acesso O(1))
+    const tiposMap = await getCalendarioPeriodoMapa(dataInicio, dataFim);
     const sqlDiaMap = new Map(sqlDia.porDia.map(d => [d.data, d]));
 
     const diasCompletos = [];
@@ -568,7 +568,10 @@ app.get('/api/dashboard/kpis', async (req, res) => {
     for (let d = new Date(begin); d <= end; d = new Date(d.getTime() + 86400000)) {
       const iso = d.toISOString().slice(0, 10);
       const rowData = sqlDiaMap.get(iso) || { data: iso, faltas: 0, previstos: 0, percentual: 0, inss: 0, ferias: 0, maternidade: 0 };
-      const tipoDia = tiposMap.get(iso) || 'UTIL';
+      const metaDia = tiposMap.get(iso);
+      // null = dia sem registro em calendario_operacional (o cliente então
+      // aplica o fallback do Calendário Nacional do Brasil)
+      const tipoDia = metaDia ? metaDia.tipo_dia : null;
       const presentes = rowData.previstos - rowData.faltas;
       
       let statusCor = 'neutro';
@@ -581,6 +584,7 @@ app.get('/api/dashboard/kpis', async (req, res) => {
       diasCompletos.push({
         ...rowData,
         tipo_dia: tipoDia,
+        dia_descricao: (metaDia && metaDia.descricao) || null,
         presentes: presentes,
         status_cor: statusCor
       });
@@ -859,6 +863,12 @@ app.get('/api/calendario-operacional', async (req, res) => {
 /**
  * POST /api/calendario-operacional
  * Body: { data: 'YYYY-MM-DD', tipo_dia: 'UTIL'|'FERIADO'|'COMPENSADO', descricao?: string }
+ *
+ * tipo_dia 'UTIL' = "Dia Útil / Normal": reverte a exceção. Sem descrição o
+ * registro é removido (DELETE) em calendario_operacional; com descrição o
+ * registro passa a ter tipo_dia 'UTIL'. Em ambos os casos a data volta a ser
+ * dia de trabalho normal nas métricas (Efetivo Previsto/Real e absenteísmo).
+ *
  * Invalida o cache de KPIs para refletir imediatamente no dashboard.
  */
 app.post('/api/calendario-operacional', async (req, res) => {
@@ -888,10 +898,7 @@ app.get('/api/calendario-operacional/ano', async (req, res) => {
     if (!ano || ano < 2000 || ano > 2100) {
       return res.status(400).json({ success: false, error: 'Parâmetro ano (2000-2100) é obrigatório.' });
     }
-    const promessas = [];
-    for (let m = 1; m <= 12; m++) promessas.push(getCalendarioOperacional(m, ano));
-    const resultados = await Promise.all(promessas);
-    const dias = resultados.flat();
+    const dias = await getCalendarioAno(ano);
     return res.json({ success: true, ano, dias });
   } catch (err) {
     console.error('Erro ao buscar calendário anual:', err);

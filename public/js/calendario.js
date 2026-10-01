@@ -24,6 +24,7 @@ const DIAS_MINI   = ['D','S','T','Q','Q','S','S'];
 /* ESTADO GLOBAL                                                        */
 /* ------------------------------------------------------------------ */
 let estadoDias  = {};   // 'YYYY-MM-DD' → { tipo_dia, descricao }
+let estadoOriginal = {}; // snapshot vindo do banco (para salvar só o que mudou)
 let modoVisao   = 'mensal';   // 'mensal' | 'anual'
 let mesAtual    = new Date().getMonth() + 1;
 let anoAtual    = new Date().getFullYear();
@@ -63,9 +64,14 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-salvar-tudo').addEventListener('click',  salvarTudo);
   document.getElementById('btn-gerar-ano').addEventListener('click',    gerarAno);
 
-  /* Modal de descrição */
-  document.getElementById('modal-salvar').addEventListener('click',   salvarDescricao);
+  /* Modal de tipo do dia + descrição */
+  document.getElementById('modal-salvar').addEventListener('click',   salvarModal);
   document.getElementById('modal-cancelar').addEventListener('click', fecharModal);
+  document.getElementById('modal-tipo-select').addEventListener('change', e => {
+    if (e.target.value === 'UTIL') {
+      document.getElementById('modal-desc-input').value = '';
+    }
+  });
   document.getElementById('desc-modal').addEventListener('click', e => {
     if (e.target === document.getElementById('desc-modal')) fecharModal();
   });
@@ -148,6 +154,7 @@ async function carregarMes(mes, ano) {
   if (!json.success) throw new Error(json.error);
   for (const d of json.dias) {
     estadoDias[d.data] = { tipo_dia: d.tipo_dia, descricao: d.descricao || '' };
+    estadoOriginal[d.data] = { tipo_dia: d.tipo_dia, descricao: d.descricao || '' };
   }
 }
 
@@ -156,8 +163,10 @@ async function carregarAno(ano) {
   const json = await resp.json();
   if (!json.success) throw new Error(json.error);
   estadoDias = {};
+  estadoOriginal = {};
   for (const d of json.dias) {
     estadoDias[d.data] = { tipo_dia: d.tipo_dia, descricao: d.descricao || '' };
+    estadoOriginal[d.data] = { tipo_dia: d.tipo_dia, descricao: d.descricao || '' };
   }
 }
 
@@ -324,7 +333,9 @@ function onClickDia(data, el) {
   const tipo  = tipoDe(data);
   const prox  = proxTipo(tipo);
   const desc  = descDe(data);
-  estadoDias[data] = { tipo_dia: prox, descricao: desc };
+  // Voltar para "Dia Útil / Normal" descarta a anotação da exceção:
+  // a data volta ao comportamento padrão e a exceção deixa de existir.
+  estadoDias[data] = { tipo_dia: prox, descricao: prox === 'UTIL' ? '' : desc };
   marcarAlterado();
 
   /* Atualiza visual do elemento sem re-renderizar tudo */
@@ -415,15 +426,18 @@ function atualizarResumoAno() {
 }
 
 /* ------------------------------------------------------------------ */
-/* MODAL DE DESCRIÇÃO (clique direito / botão lápis)                   */
+/* MODAL DE TIPO DO DIA + DESCRIÇÃO (clique direito)                   */
 /* ------------------------------------------------------------------ */
 function abrirModal(data) {
   modalDataAtual = data;
   const [ano, mes, dia] = data.split('-');
   document.getElementById('modal-data').textContent = `${dia}/${mes}/${ano}`;
+  /* Seletor de tipo: sempre com as 3 opções (Dia Útil / Normal, Feriado,
+     Compensado / Ponto Facultativo), independentemente do status atual */
+  document.getElementById('modal-tipo-select').value = tipoDe(data);
   document.getElementById('modal-desc-input').value = descDe(data);
   document.getElementById('desc-modal').classList.add('modal--open');
-  setTimeout(() => document.getElementById('modal-desc-input').focus(), 50);
+  setTimeout(() => document.getElementById('modal-tipo-select').focus(), 50);
 }
 
 function fecharModal() {
@@ -431,11 +445,13 @@ function fecharModal() {
   modalDataAtual = null;
 }
 
-function salvarDescricao() {
+function salvarModal() {
   if (!modalDataAtual) return;
+  const data  = modalDataAtual;
+  const sel   = document.getElementById('modal-tipo-select').value;
+  const tipo  = TIPOS.includes(sel) ? sel : tipoDe(data);
   const desc  = document.getElementById('modal-desc-input').value.trim();
-  const tipo  = tipoDe(modalDataAtual);
-  estadoDias[modalDataAtual] = { tipo_dia: tipo, descricao: desc };
+  estadoDias[data] = { tipo_dia: tipo, descricao: desc };
   fecharModal();
   marcarAlterado();
   if (modoVisao === 'mensal') renderMensal();
@@ -474,6 +490,7 @@ async function gerarAno() {
     );
     /* Recarrega */
     estadoDias = {};
+    estadoOriginal = {};
     alterado = false;
     document.getElementById('btn-salvar-tudo').classList.remove('btn-salvar--alterado');
     await carregarEExibir();
@@ -486,10 +503,27 @@ async function gerarAno() {
 }
 
 /* ------------------------------------------------------------------ */
-/* SALVAR TUDO                                                          */
+/* SALVAR TUDO (somente o que mudou)                                    */
 /* ------------------------------------------------------------------ */
+function mudou(data, estado) {
+  const orig = estadoOriginal[data];
+  if (!orig) return true; // dia não existia no banco (novo ou removido)
+  return orig.tipo_dia !== estado.tipo_dia ||
+         (orig.descricao || '') !== (estado.descricao || '');
+}
+
 async function salvarTudo() {
   if (salvando) return;
+
+  const pendentes = Object.entries(estadoDias).filter(([data, estado]) => mudou(data, estado));
+
+  if (pendentes.length === 0) {
+    alterado = false;
+    document.getElementById('btn-salvar-tudo').classList.remove('btn-salvar--alterado');
+    mostrarToast('Nenhuma alteração para salvar.', 'ok');
+    return;
+  }
+
   salvando = true;
 
   const btn = document.getElementById('btn-salvar-tudo');
@@ -499,8 +533,7 @@ async function salvarTudo() {
   ico.className = 'bi bi-hourglass-split';
   lbl.textContent = 'Salvando…';
 
-  /* Coleta apenas dias que foram explicitamente definidos no estado */
-  const promises = Object.entries(estadoDias).map(([data, estado]) =>
+  const promises = pendentes.map(([data, estado]) =>
     fetch('/api/calendario-operacional', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -514,7 +547,11 @@ async function salvarTudo() {
     if (erros.length > 0) {
       mostrarToast(`${erros.length} dia(s) falharam ao salvar.`, 'erro');
     } else {
-      mostrarToast(`${promises.length} dia(s) salvos com sucesso!`, 'ok');
+      /* Gravado: o novo valor passa a ser o estado de referência */
+      pendentes.forEach(([data, estado]) => {
+        estadoOriginal[data] = { tipo_dia: estado.tipo_dia, descricao: estado.descricao || '' };
+      });
+      mostrarToast(`${pendentes.length} dia(s) salvos com sucesso!`, 'ok');
       alterado = false;
       btn.classList.remove('btn-salvar--alterado');
     }

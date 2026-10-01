@@ -1848,10 +1848,39 @@ body.pdf-export .eng-topnav,
   z-index: 2;
 }
 
-.table-matriz thead tr:nth-child(2) th {
+/* 3 linhas de cabeçalho: tags | nº do dia | dia da semana (offsets fixos) */
+.table-matriz thead tr:nth-child(1) th { top: 0; height: 20px; z-index: 4; padding: 2px 4px; }
+.table-matriz thead tr:nth-child(2) th { top: 20px; height: 22px; z-index: 3; }
+.table-matriz thead tr:nth-child(3) th { top: 42px; z-index: 3; }
+
+.table-matriz thead tr:nth-child(3) th {
   background: #334155;
   font-size: 0.65rem;
   font-weight: 600;
+}
+
+/* Tags de topo: FERIADO / COMPENSADO (exibe a descrição cadastrada
+   no Calendário Operacional, cortando com reticências se não couber) */
+.matriz-tag {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.55rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  white-space: nowrap;
+  line-height: 1.3;
+  vertical-align: middle;
+}
+.matriz-tag--feriado { background: #1e3a8a; color: #fff; }
+.matriz-tag--compensado { background: #b45309; color: #fff; }
+.table-matriz thead th.tag-cell--feriado,
+.table-matriz thead th.tag-cell--compensado {
+  background: #1e293b;
+  padding: 1px 2px;
 }
 
 .table-matriz tbody tr th {
@@ -1868,8 +1897,21 @@ body.pdf-export .eng-topnav,
 
 .table-matriz tbody tr:hover { background: #f1f5f9; }
 .table-matriz td.col--fim-semana { background: #f1f5f9 !important; }
-.table-matriz td.col--feriado { background: #eff6ff !important; border-color: #93c5fd !important; }
-.table-matriz td.col--compensado { background: #fffbeb !important; border-color: #fcd34d !important; }
+
+/* Destaque da coluna inteira: feriado e compensado/ponto facultativo
+   (indicadores zerados — texto escuro garante leitura sobre o fundo âmbar) */
+.table-matriz td.col--feriado,
+.table-matriz td.col--compensado {
+  background: #fef3c7 !important;
+  color: #92400e !important;
+  border-color: #fcd34d !important;
+}
+.table-matriz thead th.col--feriado,
+.table-matriz thead th.col--compensado {
+  background: #fef3c7 !important;
+  color: #92400e !important;
+  border-color: #fcd34d !important;
+}
 
 .table-matriz td.cell--verde   { background: #d1fae5; color: #065f46; font-weight: 700; }
 .table-matriz td.cell--amarelo { background: #fef3c7; color: #92400e; font-weight: 700; }

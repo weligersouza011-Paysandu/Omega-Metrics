@@ -103,6 +103,7 @@ async function createSchema() {
       tipo_dia VARCHAR(20) NOT NULL DEFAULT 'UTIL',
       descricao VARCHAR(100)
     );
+    CREATE INDEX IF NOT EXISTS idx_calendario_data ON calendario_operacional (data);
   `);
   await pool.query('ALTER TABLE ponto_historico ADD COLUMN IF NOT EXISTS cid TEXT');
 }
@@ -590,17 +591,63 @@ async function getCalendarioOperacional(mes, ano) {
   const result = await pool.query(`
     SELECT data::text AS data, tipo_dia, descricao
     FROM calendario_operacional
-    WHERE data BETWEEN $1::date AND ($1::date + INTERVAL '1 month - 1 day')::date
+    WHERE data >= $1::date AND data <= ($1::date + INTERVAL '1 month - 1 day')::date
     ORDER BY data
   `, [dataInicio]);
   return result.rows;
 }
 
 /**
- * upsertDiaOperacional — insere ou atualiza o tipo do dia no calendário operacional.
+ * getCalendarioPeriodoMapa — UMA única consulta com intervalo de datas
+ * (`WHERE data >= $1 AND data <= $2`) e devolve um Map<data, {tipo_dia, descricao}>
+ * para leitura O(1) no backend (nenhuma consulta sequencial por dia/mês).
+ * @param {string} dataInicio - 'YYYY-MM-DD'
+ * @param {string} dataFim    - 'YYYY-MM-DD'
+ * @returns {Promise<Map<string, {tipo_dia: string, descricao: string|null}>>}
+ */
+async function getCalendarioPeriodoMapa(dataInicio, dataFim) {
+  const result = await pool.query(`
+    SELECT data::text AS data, tipo_dia, descricao
+    FROM calendario_operacional
+    WHERE data >= $1::date AND data <= $2::date
+    ORDER BY data
+  `, [dataInicio, dataFim]);
+  const mapa = new Map();
+  for (const row of result.rows) mapa.set(row.data, { tipo_dia: row.tipo_dia, descricao: row.descricao });
+  return mapa;
+}
+
+/**
+ * getCalendarioAno — todos os dias de um ano em UMA única query com intervalo
+ * (substitui 12 consultas mensais encadeadas na visão anual). Retorno idêntico
+ * ao de getCalendarioOperacional: array de { data, tipo_dia, descricao }.
+ * @param {number} ano - ex. 2026
+ */
+async function getCalendarioAno(ano) {
+  const result = await pool.query(`
+    SELECT data::text AS data, tipo_dia, descricao
+    FROM calendario_operacional
+    WHERE data >= $1::date AND data <= $2::date
+    ORDER BY data
+  `, [`${ano}-01-01`, `${ano}-12-31`]);
+  return result.rows;
+}
+
+/**
+ * upsertDiaOperacional — grava o tipo do dia no calendário operacional.
+ *
+ * Regra de "Dia Útil / Normal" (reversão de exceção):
+ *   - tipo UTIL **sem** descrição → o registro de exceção é REMOVIDO (DELETE),
+ *     devolvendo a data ao comportamento padrão (conta no Efetivo Previsto/
+ *     Real e no absenteísmo como qualquer dia de trabalho).
+ *   - tipo UTIL **com** descrição → o registro é mantido com tipo_dia = 'UTIL'
+ *     (a anotação é preservada e o dia deixa de ser exceção).
+ *   - FERIADO / COMPENSADO → UPSERT normal.
+ *
  * @param {string} data      - 'YYYY-MM-DD'
  * @param {string} tipo_dia  - 'UTIL' | 'FERIADO' | 'COMPENSADO'
  * @param {string} descricao - opcional
+ * @returns {Promise<{data:string, tipo_dia:string, descricao:string|null, removido?:boolean}>}
  */
 async function upsertDiaOperacional(data, tipo_dia, descricao) {
   const tiposValidos = ['UTIL', 'FERIADO', 'COMPENSADO'];
@@ -609,14 +656,27 @@ async function upsertDiaOperacional(data, tipo_dia, descricao) {
     err.statusCode = 400;
     throw err;
   }
+  const desc = descricao || null;
+
+  // 1 único statement atômico por ramo (sem SELECTs preparatórios):
+  //   UTIL sem anotação → DELETE da exceção; demais casos → UPSERT composto.
+  // Voltou a ser Dia Útil sem anotação → apaga a exceção do banco
+  if (tipo_dia === 'UTIL' && !desc) {
+    const del = await pool.query(
+      'DELETE FROM calendario_operacional WHERE data = $1::date RETURNING data',
+      [data]
+    );
+    return { data, tipo_dia: 'UTIL', descricao: null, removido: del.rowCount > 0 };
+  }
+
   await pool.query(`
     INSERT INTO calendario_operacional (data, tipo_dia, descricao)
     VALUES ($1::date, $2, $3)
     ON CONFLICT (data) DO UPDATE SET
       tipo_dia  = excluded.tipo_dia,
       descricao = excluded.descricao
-  `, [data, tipo_dia, descricao || null]);
-  return { data, tipo_dia, descricao: descricao || null };
+  `, [data, tipo_dia, desc]);
+  return { data, tipo_dia, descricao: desc };
 }
 
 /**
@@ -711,16 +771,30 @@ async function gerarCalendarioAno(ano, sobrescrever = false) {
     ? 'DO UPDATE SET tipo_dia = excluded.tipo_dia, descricao = excluded.descricao'
     : 'DO NOTHING';
 
+  // Escrita em lote: um único INSERT multi-linha por fatia (em vez de ~365
+  // INSERTs sequenciais), tudo dentro da MESMA transação e com o mesmo
+  // ON CONFLICT (data) de antes.
+  const LOTE = 500;
+
   return withTransaction(async (client) => {
     let inseridos = 0, pulados = 0;
-    for (const [data, tipo_dia, descricao] of registros) {
+    for (let i = 0; i < registros.length; i += LOTE) {
+      const fatia = registros.slice(i, i + LOTE);
+      const params = [];
+      const valores = fatia.map((r, j) => {
+        params.push(r[0], r[1], r[2]);
+        const b = j * 3;
+        return `($${b + 1}::date, $${b + 2}, $${b + 3})`;
+      }).join(', ');
+
       const r = await client.query(
         `INSERT INTO calendario_operacional (data, tipo_dia, descricao)
-         VALUES ($1::date, $2, $3)
+         VALUES ${valores}
          ON CONFLICT (data) ${conflictClause}`,
-        [data, tipo_dia, descricao]
+        params
       );
-      if (r.rowCount > 0) inseridos++; else pulados++;
+      inseridos += r.rowCount;
+      pulados   += fatia.length - r.rowCount;
     }
     return { inseridos, pulados, total: registros.length };
   });
@@ -878,6 +952,8 @@ module.exports = {
   getDesligamentosHistorico,
   getCalendarioDatas,
   getCalendarioOperacional,
+  getCalendarioPeriodoMapa,
+  getCalendarioAno,
   upsertDiaOperacional,
   gerarCalendarioAno,
   getPeriodoLimites,

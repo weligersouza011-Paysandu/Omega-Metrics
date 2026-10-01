@@ -270,13 +270,18 @@
     .modal-box h3 { font-size: .95rem; font-weight: 700; color: #f1f5f9; margin: 0 0 .3rem; }
     .modal-box p  { font-size: .78rem; color: #94a3b8; margin: 0 0 .9rem; }
     .modal-box label { font-size: .75rem; font-weight: 600; color: #94a3b8; display: block; margin-bottom: .35rem; }
-    .modal-box input[type="text"] {
+    .modal-box input[type="text"],
+    .modal-box select {
       width: 100%; padding: .55rem .85rem;
       background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
       border-radius: 7px; color: #e2e8f0; font-family: 'Inter',sans-serif; font-size: .82rem;
       outline: none; box-sizing: border-box; transition: border-color .2s;
     }
-    .modal-box input[type="text"]:focus { border-color: #6366f1; }
+    .modal-box select { cursor: pointer; }
+    .modal-box input[type="text"]:focus,
+    .modal-box select:focus { border-color: #6366f1; }
+    .modal-box select option { background: #1e293b; color: #e2e8f0; }
+    .modal-hint { font-size: .68rem; color: #64748b; margin: .3rem 0 0; line-height: 1.4; }
     .modal-actions { display: flex; gap: .65rem; justify-content: flex-end; margin-top: 1.1rem; }
     #modal-cancelar {
       background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.12);
@@ -391,7 +396,7 @@
     <div class="cal-hero__info">
       <h1>Calendário Operacional</h1>
       <p>Gerencie dias úteis, feriados e compensados. Apenas dias <strong>Úteis</strong> entram no cálculo de absenteísmo.
-         Clique num dia para ciclar o status · Clique direito para editar a descrição.</p>
+         Clique num dia para ciclar o status · Clique direito para escolher o tipo (Dia Útil / Normal, Feriado, Compensado) e a descrição.</p>
     </div>
   </div>
 
@@ -465,16 +470,26 @@
     <div class="cal-legenda__item"><div class="cal-legenda__dot cal-legenda__dot--util"></div> Dia Útil — conta no absenteísmo</div>
     <div class="cal-legenda__item"><div class="cal-legenda__dot cal-legenda__dot--feriado"></div> Feriado — excluído</div>
     <div class="cal-legenda__item"><div class="cal-legenda__dot cal-legenda__dot--compensado"></div> Compensado/Fim de semana — excluído</div>
-    <span class="cal-hint"><i class="bi bi-mouse2" style="color:#6366f1"></i> Clique = ciclar &nbsp;|&nbsp; <i class="bi bi-mouse3" style="color:#94a3b8"></i> Clique dir. = descrição</span>
+    <span class="cal-hint"><i class="bi bi-mouse2" style="color:#6366f1"></i> Clique = ciclar &nbsp;|&nbsp; <i class="bi bi-mouse3" style="color:#94a3b8"></i> Clique dir. = tipo + descrição</span>
   </div>
 
-  <!-- ============ MODAL DESCRIÇÃO ============ -->
+  <!-- ============ MODAL TIPO + DESCRIÇÃO ============ -->
   <div id="desc-modal" role="dialog" aria-modal="true" aria-labelledby="modal-titulo">
     <div class="modal-box">
-      <h3 id="modal-titulo">Descrição do Dia</h3>
+      <h3 id="modal-titulo">Editar Dia</h3>
       <p>Data: <strong id="modal-data">—</strong></p>
-      <label for="modal-desc-input">Descrição (ex.: Feriado Municipal, Acordo Coletivo)</label>
+
+      <label for="modal-tipo-select">Tipo do dia</label>
+      <select id="modal-tipo-select" title="Selecione o tipo do dia">
+        <option value="UTIL">Dia Útil / Normal</option>
+        <option value="FERIADO">Feriado</option>
+        <option value="COMPENSADO">Compensado / Ponto Facultativo</option>
+      </select>
+      <p class="modal-hint"><i class="bi bi-arrow-counterclockwise"></i> Ao escolher <strong>Dia Útil / Normal</strong> e confirmar, a exceção é removida e a data volta a contar no Efetivo e no absenteísmo.</p>
+
+      <label for="modal-desc-input" style="margin-top:.85rem">Descrição (ex.: Feriado Municipal, Acordo Coletivo)</label>
       <input type="text" id="modal-desc-input" placeholder="Opcional — máx. 100 caracteres" maxlength="100">
+
       <div class="modal-actions">
         <button id="modal-cancelar">Cancelar</button>
         <button id="modal-salvar">Confirmar</button>
