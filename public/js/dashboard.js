@@ -1374,6 +1374,57 @@
     }
   }
 
+  // BASE DO CALENDÁRIO OPERACIONAL (dimensão) PARA A GRADE
+  // A grade renderiza 12 meses independentemente dos lançamentos, então as
+  // marcações (feriado / compensado / dia útil) vêm de uma consulta própria:
+  //   GET /api/calendario-operacional/painel?dataInicio&dataFim
+  // (LEFT JOIN calendario_operacional x fatos de absenteísmo) — cobre também
+  // os dias fora do período de KPI carregado (datas futuras, meses sem
+  // frequência importada), desvinculando a estrutura do calendário da
+  // existência de lançamentos.
+  var calBaseMap = {};        // 'YYYY-MM-DD' → linha estruturada do painel
+  var calBaseCache = {};      // chave de janela → { ts, promessa }
+  var CAL_BASE_TTL_MS = 30000;
+
+  function janelaCalRenderizada() {
+    garantirCalAncora();
+    var ini = new Date(calState.ano, calState.mes, 1);
+    var fim = new Date(calState.ano, calState.mes + CAL_PAGE_MONTHS, 0);
+    return { inicio: isoDe(ini), fim: isoDe(fim) };
+  }
+
+  // Busca a dimensão-calendário da janela renderizada (por ANO — melhor
+  // aproveitamento de cache ao navegar mês a mês — com dedupe de promessa e
+  // TTL de 30s) e atualiza as células em-place quando a resposta chega.
+  function carregarCalendarioBase() {
+    var jan = janelaCalRenderizada();
+    var anoIni = parseInt(jan.inicio.slice(0, 4), 10);
+    var anoFim = parseInt(jan.fim.slice(0, 4), 10);
+    for (var a = anoIni; a <= anoFim; a++) carregarCalendarioAnoBase(a);
+  }
+
+  function carregarCalendarioAnoBase(ano) {
+    var chave = 'ano|' + ano;
+    var entrada = calBaseCache[chave];
+    if (entrada && (entrada.promessa || Date.now() - entrada.ts < CAL_BASE_TTL_MS)) return;
+
+    var promessa = fetch(API_URL + '/api/calendario-operacional/painel?dataInicio=' + ano + '-01-01&dataFim=' + ano + '-12-31')
+      .then(function (resp) { return resp.json(); })
+      .then(function (json) {
+        calBaseCache[chave] = { ts: Date.now(), promessa: null };
+        var dias = (json && json.dias) || [];
+        if (!dias.length) return;
+        dias.forEach(function (d) { calBaseMap[d.data] = d; });
+        var grid = document.getElementById('calendario');
+        if (grid) refreshCalendarioCells(grid);
+      })
+      .catch(function (err) {
+        calBaseCache[chave] = { ts: 0, promessa: null }; // permite nova tentativa
+        console.warn('[Calendário] Falha ao carregar dimensão-calendário:', err);
+      });
+    calBaseCache[chave] = { ts: 0, promessa: promessa };
+  }
+
   function renderCalendario() {
     var container = document.getElementById('calendario');
     if (!container) return;
@@ -1388,6 +1439,10 @@
     // Âncora padrão: janela de 12 meses terminando no Mês Atual
     // (slot 12 = mês corrente, slot 1 = 11 meses atrás).
     garantirCalAncora();
+
+    // Garante as marcações do Calendário Operacional para TODA a janela
+    // (inclusive dias sem lançamentos no período de KPI carregado).
+    carregarCalendarioBase();
 
     var pageMonths = CAL_PAGE_MONTHS;
     var key = calPageKeyAtual(pageMonths);
@@ -1413,9 +1468,19 @@
     container.dataset.calKey = key;
   }
 
-  // Estado visual de uma célula (cor por faixa, título e seleção)
+  // Estado visual de uma célula — PRIMEIRO a estrutura do Calendário
+  // Operacional (feriado/compensado/dia útil valem mesmo sem lançamentos) e,
+  // em seguida, a taxa de absenteísmo dos lançamentos (quando existirem).
   function applyDayState(el, iso) {
-    var reg = mapPorDia[iso];
+    var reg  = mapPorDia[iso] || null;    // feitos do período de KPI carregado
+    var base = calBaseMap[iso] || null;    // dimensão-calendário da janela da grade
+
+    // Classificação SEMPRE do calendário (LEFT JOIN da dimensão), nunca dos
+    // lançamentos: dentro do período os KPIs já trazem tipo_dia; fora dele
+    // cai na base da janela renderizada.
+    var tipoDia   = (reg && reg.tipo_dia) || (base && base.tipo_dia) || null;
+    var descricao = (reg && (reg.descricao_evento || reg.dia_descricao)) ||
+                    (base && base.descricao_evento) || '';
 
     el.classList.remove(
       'cal-day--has-data', 'cal-day--verde', 'cal-day--amarelo',
@@ -1423,37 +1488,40 @@
       'cal-day--border-feriado', 'cal-day--border-compensado'
     );
 
-    if (reg) {
-      if (reg.tipo_dia === 'FERIADO') {
-        el.classList.add('cal-day--border-feriado');
-      } else if (reg.tipo_dia === 'COMPENSADO' || reg.tipo_dia === 'FOLGA') {
-        el.classList.add('cal-day--border-compensado');
-      }
+    // 1) Marcação do Calendário Operacional — ativa mesmo sem lançamentos
+    if (tipoDia === 'FERIADO') {
+      el.classList.add('cal-day--border-feriado');
+    } else if (tipoDia === 'COMPENSADO' || tipoDia === 'FOLGA') {
+      el.classList.add('cal-day--border-compensado');
     }
 
-    if (reg && (reg.previstos > 0 || reg.faltas > 0)) {
+    // 2) Absenteísmo — somente quando há lançamentos contáveis na data
+    var temLancamento = Boolean(reg && (reg.previstos > 0 || reg.faltas > 0));
+    if (temLancamento) {
       el.classList.add('cal-day--has-data');
       if (reg.status_cor === 'verde') el.classList.add('cal-day--verde');
       else if (reg.status_cor === 'amarelo') el.classList.add('cal-day--amarelo');
       else if (reg.status_cor === 'vermelho') el.classList.add('cal-day--vermelho');
       else el.classList.add('cal-day--neutro');
-
-      var dFormat = iso.split('-').reverse().slice(0, 2).join('/');
-      var tipoLabel = 'Útil';
-      if (reg.tipo_dia === 'FERIADO') tipoLabel = 'Feriado';
-      else if (reg.tipo_dia === 'COMPENSADO' || reg.tipo_dia === 'FOLGA') tipoLabel = 'Compensado';
-
-      el.title = '📅 ' + dFormat + ' - ' + tipoLabel + '\n👥 Programados: ' + reg.previstos + ' colaboradores\n✅ Presentes: ' + (reg.presentes || 0) + ' colaboradores\n⚠️ Faltas: ' + reg.faltas + ' (' + pctBr(reg.percentual) + '%)';
     } else {
+      // Sem lançamentos: mantém a cor/marca do calendário com a taxa vazia
       el.classList.add('cal-day--neutro');
-      if (reg && reg.tipo_dia && reg.tipo_dia !== 'UTIL') {
-        var dFormat = iso.split('-').reverse().slice(0, 2).join('/');
-        var tipoLabel = reg.tipo_dia === 'FERIADO' ? 'Feriado' : 'Compensado';
-        el.title = '📅 ' + dFormat + ' - ' + tipoLabel + '\n👥 Programados: 0 colaboradores\n✅ Presentes: 0 colaboradores\n⚠️ Faltas: 0 (0,00%)';
-      } else {
-        el.title = '';
-      }
     }
+
+    var dFormat = iso.split('-').reverse().slice(0, 2).join('/');
+    var tipoLabel = 'Dia Útil';
+    if (tipoDia === 'FERIADO') tipoLabel = 'Feriado';
+    else if (tipoDia === 'COMPENSADO' || tipoDia === 'FOLGA') tipoLabel = 'Compensado';
+
+    var titulo = '📅 ' + dFormat + ' - ' + tipoLabel + (descricao ? ' — ' + descricao : '');
+    if (temLancamento) {
+      titulo += '\n👥 Programados: ' + reg.previstos + ' colaboradores' +
+        '\n✅ Presentes: ' + (reg.presentes || 0) + ' colaboradores' +
+        '\n⚠️ Faltas: ' + reg.faltas + ' (' + pctBr(reg.percentual) + '%)';
+    } else {
+      titulo += '\nSem lançamentos de absenteísmo';
+    }
+    el.title = titulo;
 
     if (globalFilter.dia === iso) el.classList.add('cal-day--selected');
   }

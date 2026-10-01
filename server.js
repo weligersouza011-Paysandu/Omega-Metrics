@@ -17,7 +17,7 @@ const { initDatabase, createLote, getLote, confirmLote,
   upsertPontoHistorico, insertDesligamentosJustificados, updateCalendario,
   getPontoHistorico, getPontoParaTurnover, getKpisAgregados,
   getDesligamentosHistorico, getCalendarioDatas,
-  getCalendarioOperacional, getCalendarioPeriodoMapa, getCalendarioAno,
+  getCalendarioOperacional, getCalendarioDiasFatos, getCalendarioAno,
   upsertDiaOperacional, gerarCalendarioAno,
   getPeriodoLimites, getEfetivoTotal,
   countByDate, getByDate, deleteByDate, formatHorarioValue, verificarMatriculasNovas, updatePontoBatch } = require('./src/database/dbService');
@@ -32,7 +32,7 @@ const MESES_PT_SRV = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'S
  * nas estruturas que o dashboard espera para cada componente:
  *   .global       → totais para o KPI de velocímetro
  *   .porStatus    → rosca de justificativas (absenteismoPorStatus)
- *   .porDia       → calendário (absenteismoPorDia)
+ *   .porDia       → legado (o calendário passou a vir de getCalendarioDiasFatos)
  *   .porMes       → gráfico de linha mensal (absenteismoPorMes)
  *
  * Identifica cada linha pelo conjunto de chaves não-nulas retornadas pelo
@@ -118,6 +118,51 @@ function parseAgregados(rows) {
   porMes.sort((a, b) => a.chave.localeCompare(b.chave));
 
   return { global, porStatus, porDia, porMes, porFuncionarioCargo };
+}
+
+/**
+ * montarDiaCalendario(linha) — padroniza UM dia do calendário no padrão
+ * relacional consumido pelo dashboard e pronto para API/Power Query (Power BI):
+ *   { data, dia_semana, tipo_dia, descricao_evento, tem_lancamento, pct_absenteismo }
+ * Preserva os campos históricos (faltas/previstos/percentual/status_cor/
+ * dia_descricao) usados pela renderização atual.
+ */
+function montarDiaCalendario(r) {
+  const previstos  = parseInt(r.previstos, 10) || 0;
+  const faltas     = parseInt(r.faltas, 10) || 0;
+  const percentual = previstos > 0 ? parseFloat(((faltas / previstos) * 100).toFixed(2)) : 0;
+  // "lançamento" = dia com linhas contáveis no absenteísmo (sem denominador não há taxa)
+  const temLancamento = previstos > 0 || faltas > 0;
+
+  let statusCor = 'neutro';
+  if (temLancamento) {
+    if (percentual <= 3.0) statusCor = 'verde';
+    else if (percentual <= 4.0) statusCor = 'amarelo';
+    else statusCor = 'vermelho';
+  }
+
+  const descricao = r.descricao_evento || null;
+
+  return {
+    data: r.data,
+    dia_semana: parseInt(r.dia_semana, 10) || 0,   // 0=Dom ... 6=Sáb
+    dia_semana_nome: r.dia_semana_nome || '',
+    tipo_dia: r.tipo_dia || null,                  // UTIL | FERIADO | COMPENSADO
+    descricao_evento: descricao,
+    descricao: descricao,                          // compat: Calendário Operacional
+    dia_descricao: descricao,                      // compat: Matriz Detalhada
+    tem_lancamento: temLancamento,
+    'tem_lançamento': temLancamento,               // alias acentuado (padrão Power BI)
+    pct_absenteismo: temLancamento ? percentual : null,
+    faltas: faltas,
+    previstos: previstos,
+    percentual: percentual,
+    inss: parseInt(r.inss, 10) || 0,
+    ferias: parseInt(r.ferias, 10) || 0,
+    maternidade: parseInt(r.maternidade, 10) || 0,
+    presentes: previstos - faltas,
+    status_cor: statusCor
+  };
 }
 
 const app = express();
@@ -483,7 +528,6 @@ app.get('/api/dashboard/kpis', async (req, res) => {
     //  - getKpisAgregados (global) : CTE única no Postgres com GROUPING SETS
     // Se a dimensão não tiver filtro ativo, reutiliza agGlobal (evita 3 queries repetidas no Postgres).
     const needsStatusQuery = Boolean(cross.status);
-    const needsDiaQuery    = Boolean(cross.dia);
     const needsMesQuery    = Boolean(cross.mes);
 
     const [
@@ -492,7 +536,6 @@ app.get('/api/dashboard/kpis', async (req, res) => {
       efetivoTotalPeriodo,
       agGlobal,
       agStatusOpt,
-      agDiaOpt,
       agMesOpt,
       todosDesligRows
     ] = await Promise.all([
@@ -501,19 +544,16 @@ app.get('/api/dashboard/kpis', async (req, res) => {
       getEfetivoTotal(dataInicio, dataFim),
       getKpisAgregados(dataInicio, dataFim, cross, null),
       needsStatusQuery ? getKpisAgregados(dataInicio, dataFim, cross, 'status') : Promise.resolve(null),
-      needsDiaQuery    ? getKpisAgregados(dataInicio, dataFim, cross, 'dia')    : Promise.resolve(null),
       needsMesQuery    ? getKpisAgregados(dataInicio, dataFim, cross, 'mes')    : Promise.resolve(null),
       getDesligamentosHistorico()
     ]);
 
     const agStatus = agStatusOpt || agGlobal;
-    const agDia    = agDiaOpt    || agGlobal;
     const agMes    = agMesOpt    || agGlobal;
 
     // Analisa os resultados do GROUPING SETS
     const sqlGlobal = parseAgregados(agGlobal);
     const sqlStatus = parseAgregados(agStatus);
-    const sqlDia    = parseAgregados(agDia);
     const sqlMes    = parseAgregados(agMes);
 
 
@@ -558,38 +598,14 @@ app.get('/api/dashboard/kpis', async (req, res) => {
     graficos.absenteismoPorStatus = sqlStatus.porStatus;  // rosca (skip=status)
     graficos.absenteismoPorMes    = sqlMes.porMes;        // gráfico mês (skip=mes)
 
-    // Calendário (skip=dia): UMA query de intervalo → Map<data, meta> (acesso O(1))
-    const tiposMap = await getCalendarioPeriodoMapa(dataInicio, dataFim);
-    const sqlDiaMap = new Map(sqlDia.porDia.map(d => [d.data, d]));
-
-    const diasCompletos = [];
-    const begin = new Date(dataInicio);
-    const end = new Date(dataFim);
-    for (let d = new Date(begin); d <= end; d = new Date(d.getTime() + 86400000)) {
-      const iso = d.toISOString().slice(0, 10);
-      const rowData = sqlDiaMap.get(iso) || { data: iso, faltas: 0, previstos: 0, percentual: 0, inss: 0, ferias: 0, maternidade: 0 };
-      const metaDia = tiposMap.get(iso);
-      // null = dia sem registro em calendario_operacional (o cliente então
-      // aplica o fallback do Calendário Nacional do Brasil)
-      const tipoDia = metaDia ? metaDia.tipo_dia : null;
-      const presentes = rowData.previstos - rowData.faltas;
-      
-      let statusCor = 'neutro';
-      if (rowData.previstos > 0 || rowData.faltas > 0) {
-        if (rowData.percentual <= 3.0) statusCor = 'verde';
-        else if (rowData.percentual <= 4.0) statusCor = 'amarelo';
-        else statusCor = 'vermelho';
-      }
-
-      diasCompletos.push({
-        ...rowData,
-        tipo_dia: tipoDia,
-        dia_descricao: (metaDia && metaDia.descricao) || null,
-        presentes: presentes,
-        status_cor: statusCor
-      });
-    }
-    graficos.absenteismoPorDia = diasCompletos;
+    // Calendário de Absenteísmo — MODELO DIMENSÃO/FEITOS (LEFT JOIN):
+    // UMA única query devolve TODOS os dias do período (série de datas) com a
+    // classificação do Calendário Operacional e os lançamentos de absenteísmo,
+    // inclusive para dias SEM qualquer registro de faltas/presenças (datas
+    // futuras, meses sem frequência importada).
+    // A dimensão `dia` não filtra: o próprio calendário é a dimensão do dia.
+    const linhasDia = await getCalendarioDiasFatos(dataInicio, dataFim, cross);
+    graficos.absenteismoPorDia = linhasDia.map(montarDiaCalendario);
 
     // Ranking e Gráfico por Função (FILTRAGEM RIGOROSA DE COLABORADORES ATIVOS)
     const desligados = [...(todosDesligRows || []), ...(desligRows || []), ...(desligData || [])];
@@ -864,10 +880,10 @@ app.get('/api/calendario-operacional', async (req, res) => {
  * POST /api/calendario-operacional
  * Body: { data: 'YYYY-MM-DD', tipo_dia: 'UTIL'|'FERIADO'|'COMPENSADO', descricao?: string }
  *
- * tipo_dia 'UTIL' = "Dia Útil / Normal": reverte a exceção. Sem descrição o
- * registro é removido (DELETE) em calendario_operacional; com descrição o
- * registro passa a ter tipo_dia 'UTIL'. Em ambos os casos a data volta a ser
- * dia de trabalho normal nas métricas (Efetivo Previsto/Real e absenteísmo).
+ * tipo_dia 'UTIL' = "Dia Útil / Normal": reverte a exceção gravando um registro
+ * explícito com tipo_dia 'UTIL' (UPSERT, com ou sem descrição). A data volta a
+ * ser dia de trabalho normal nas métricas (Efetivo Previsto/Real e
+ * absenteísmo) e não é mais reclassificada na leitura.
  *
  * Invalida o cache de KPIs para refletir imediatamente no dashboard.
  */
@@ -885,6 +901,54 @@ app.post('/api/calendario-operacional', async (req, res) => {
     return res.json({ success: true, ...result });
   } catch (err) {
     return res.status(err.statusCode || 500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/calendario-operacional/painel?dataInicio=YYYY-MM-DD&dataFim=YYYY-MM-DD
+ *
+ * Dimensão-calendário COMPLETA (LEFT JOIN calendario_operacional x fatos de
+ * absenteísmo de ponto_historico): retorna TODOS os dias do intervalo com a
+ * classificação do Calendário Operacional mesmo quando NÃO existem lançamentos
+ * de faltas/presenças (datas futuras, meses sem frequência importada etc.).
+ *
+ * Padrão relacional para consumo externo (Power BI / Power Query):
+ *   { data, dia_semana, tipo_dia, descricao_evento, tem_lancamento, pct_absenteismo }
+ *
+ * Também é a fonte das marcações do "Calendário de Absenteísmo" do dashboard
+ * para os dias fora do período de KPI carregado (janela de 12 meses).
+ */
+app.get('/api/calendario-operacional/painel', async (req, res) => {
+  try {
+    const dataInicio = String(req.query.dataInicio || '').trim();
+    const dataFim    = String(req.query.dataFim || '').trim();
+    const isoOk = v => /^\d{4}-\d{2}-\d{2}$/.test(v);
+    if (!isoOk(dataInicio) || !isoOk(dataFim) || dataInicio > dataFim) {
+      return res.status(400).json({ success: false, error: 'dataInicio e dataFim obrigatórios no formato YYYY-MM-DD (dataInicio <= dataFim).' });
+    }
+    const maxDias = 800; // janela máxima (~26 meses) por chamada
+    const diasEntre = Math.round((new Date(dataFim + 'T00:00:00Z') - new Date(dataInicio + 'T00:00:00Z')) / 86400000);
+    if (diasEntre >= maxDias) {
+      return res.status(400).json({ success: false, error: `Intervalo máximo de ${maxDias} dias por chamada.` });
+    }
+
+    const cacheKey = `calpainel|${dataInicio}|${dataFim}`;
+    const cached = kpiCache.get(cacheKey);
+    if (cached !== undefined) return res.json(cached);
+
+    const linhas = await getCalendarioDiasFatos(dataInicio, dataFim, null);
+    const payload = {
+      success: true,
+      dataInicio,
+      dataFim,
+      total: linhas.length,
+      dias: linhas.map(montarDiaCalendario)
+    };
+    kpiCache.set(cacheKey, payload);
+    return res.json(payload);
+  } catch (err) {
+    console.error('Erro ao montar painel do calendário:', err);
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 

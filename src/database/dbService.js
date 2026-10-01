@@ -393,6 +393,28 @@ async function getPontoParaTurnover(dataInicio, dataFim) {
   return result.rows;
 }
 
+// Listas de status que geram absenteísmo (= geraAbsenteismo: true em statusRules.js)
+// Compartilhadas por getKpisAgregados e getCalendarioDiasFatos (fonte única de regra).
+const ST_FALTAS = [
+  'FALTA SEM JUSTIFICATIVA', 'FALTA', 'ATESTADO MÉDICO', 'ATESTADO MEDICO', 'ATESTADO',
+  'ATESTADO DE ÓBITO', 'ATESTADO DE OBITO', 'DECLARAÇÃO', 'DECLARACAO', 'DECLARACAO BANCO',
+  'BO', 'BOLETIM DE OCORRENCIA', 'ÓBITO', 'OBITO',
+  'LICENÇA CASAMENTO', 'LICENCA CASAMENTO', 'LICENÇA PATERNIDADE', 'LICENCA PATERNIDADE',
+  'SUSPENSÃO', 'SUSPENSAO', 'SUSPENCAO'
+];
+// Listas de status que contam como presença (= contaComoPresenca: true)
+const ST_PRESENCAS = [
+  'PRESENTE', 'ADVERTÊNCIA', 'ADVERTENCIA', 'TRABALHO EXTERNO', 'RELOGIO BLOQUEADO', 'TRABALHO REMOTO'
+];
+// Status de isenção/demissão que NÃO entram no denominador (excluídos de KPIs)
+const ST_EXCLUIDOS = [
+  'COMPENSAÇÃO', 'COMPENSACAO', 'FÉRIAS', 'FERIAS', 'FOLGA', 'JUSTIFICADO FOLGA', 'EXAME PERIÓDICO', 'EXAME PERIODICO', 'EXAME',
+  'LICENÇA MATERNIDADE', 'LICENCA MATERNIDADE', 'INSS', 'LICENCA INSS', 'AGUARDANDO CRACHÁ', 'AGUARDANDO CRACHA',
+  'TREINAMENTO', 'FERIADO', 'AGUARDANDO MOBILIZAÇÃO SGC', 'TRANSFERÊNCIA',
+  'À DISPOSIÇÃO', 'A DISPOSICAO', 'DISPOSICAO', 'COMPENSADO', 'ABONO', 'À COMPENSAR', 'A COMPENSAR',
+  'ACORDO COLETIVO', 'FOLGA ANIVERSÁRIO', 'FOLGA ANIVERSARIO', 'DEMITIDO', 'DEMISSAO', 'DEMISSÃO', 'DESLIGADO', 'RESCISAO', 'RESCISÃO'
+];
+
 /**
  * getKpisAgregados — agrega os dados de absenteísmo diretamente no PostgreSQL
  * usando CTE com classificação de status, eliminando a transferência de linhas
@@ -414,34 +436,14 @@ async function getPontoParaTurnover(dataInicio, dataFim) {
  *                            null ou string vazia = sem filtro para a dimensão
  * @param {string|null} skip - dimensão a ser pulada neste request (regra de escopo)
  */
+
 async function getKpisAgregados(dataInicio, dataFim, filtros, skip) {
   const f = filtros || {};
   const fStatus  = (skip !== 'status'      && f.status      && String(f.status).trim())      ? String(f.status).trim()      : null;
   const fDia     = (skip !== 'dia'         && f.dia         && String(f.dia).trim())          ? String(f.dia).trim()         : null;
   const fMes     = (skip !== 'mes'         && f.mes         && String(f.mes).trim())          ? String(f.mes).trim()         : null;
   const fColab   = (skip !== 'colaborador' && f.colaborador && String(f.colaborador).trim())  ? String(f.colaborador).trim().toUpperCase() : null;
-  const fFuncao  = (skip !== 'funcao'      && f.funcao      && String(f.funcao).trim())       ? String(f.funcao).trim().toUpperCase()       : null;
-
-  // Listas de status que geram absenteísmo (= geraAbsenteismo: true em statusRules.js)
-  const FALTAS = [
-    'FALTA SEM JUSTIFICATIVA', 'FALTA', 'ATESTADO MÉDICO', 'ATESTADO MEDICO', 'ATESTADO',
-    'ATESTADO DE ÓBITO', 'ATESTADO DE OBITO', 'DECLARAÇÃO', 'DECLARACAO', 'DECLARACAO BANCO',
-    'BO', 'BOLETIM DE OCORRENCIA', 'ÓBITO', 'OBITO',
-    'LICENÇA CASAMENTO', 'LICENCA CASAMENTO', 'LICENÇA PATERNIDADE', 'LICENCA PATERNIDADE',
-    'SUSPENSÃO', 'SUSPENSAO', 'SUSPENCAO'
-  ];
-  // Listas de status que contam como presença (= contaComoPresenca: true)
-  const PRESENCAS = [
-    'PRESENTE', 'ADVERTÊNCIA', 'ADVERTENCIA', 'TRABALHO EXTERNO', 'RELOGIO BLOQUEADO', 'TRABALHO REMOTO'
-  ];
-  // Status de isenção/demissão que NÃO entram no denominador (excluídos de KPIs)
-  const EXCLUIDOS = [
-    'COMPENSAÇÃO', 'COMPENSACAO', 'FÉRIAS', 'FERIAS', 'FOLGA', 'JUSTIFICADO FOLGA', 'EXAME PERIÓDICO', 'EXAME PERIODICO', 'EXAME',
-    'LICENÇA MATERNIDADE', 'LICENCA MATERNIDADE', 'INSS', 'LICENCA INSS', 'AGUARDANDO CRACHÁ', 'AGUARDANDO CRACHA',
-    'TREINAMENTO', 'FERIADO', 'AGUARDANDO MOBILIZAÇÃO SGC', 'TRANSFERÊNCIA',
-    'À DISPOSIÇÃO', 'A DISPOSICAO', 'DISPOSICAO', 'COMPENSADO', 'ABONO', 'À COMPENSAR', 'A COMPENSAR',
-    'ACORDO COLETIVO', 'FOLGA ANIVERSÁRIO', 'FOLGA ANIVERSARIO', 'DEMITIDO', 'DEMISSAO', 'DEMISSÃO', 'DESLIGADO', 'RESCISAO', 'RESCISÃO'
-  ];
+  const fFuncao  = (skip !== 'funcao'      && f.funcao      && String(f.funcao).trim())       ? String(f.funcao).trim().toUpperCase()      : null;
 
   // Parametrização dinâmica: $1 e $2 são sempre dataInicio/dataFim.
   // Os filtros opcionais ocupam posições $3 em diante.
@@ -476,9 +478,9 @@ async function getKpisAgregados(dataInicio, dataFim, filtros, skip) {
         COALESCE(TRIM(ph.status), '')           AS status_raw,
         COALESCE(cal.tipo_dia, 'UTIL')          AS tipo_dia,
         CASE
-          WHEN UPPER(TRIM(ph.status)) = ANY(${ addParam(FALTAS) }::text[])    THEN 'falta'
-          WHEN UPPER(TRIM(ph.status)) = ANY(${ addParam(PRESENCAS) }::text[]) THEN 'presenca'
-          WHEN UPPER(TRIM(ph.status)) = ANY(${ addParam(EXCLUIDOS) }::text[]) THEN 'excluido'
+          WHEN UPPER(TRIM(ph.status)) = ANY(${ addParam(ST_FALTAS) }::text[])    THEN 'falta'
+          WHEN UPPER(TRIM(ph.status)) = ANY(${ addParam(ST_PRESENCAS) }::text[]) THEN 'presenca'
+          WHEN UPPER(TRIM(ph.status)) = ANY(${ addParam(ST_EXCLUIDOS) }::text[]) THEN 'excluido'
           ELSE 'desconhecido'
         END AS classe
       FROM ponto_historico ph
@@ -634,20 +636,148 @@ async function getCalendarioAno(ano) {
 }
 
 /**
+ * getCalendarioDiasFatos — MODELO DIMENSÃO-CALENDÁRIO (LEFT JOIN).
+ *
+ * Retorna TODOS os dias do intervalo (generate_series), com a classificação
+ * vinda da dimensão `calendario_operacional` (LEFT JOIN) e, à direita, os FATOS
+ * de absenteísmo agregados de `ponto_historico` (LEFT JOIN) — o dia aparece
+ * mesmo quando NÃO existe lançamento de faltas/presenças (datas futuras,
+ * meses sem frequência importada etc.).
+ *
+ * @param {string} dataInicio   'YYYY-MM-DD'
+ * @param {string} dataFim      'YYYY-MM-DD'
+ * @param {object} [filtros]    { status, mes, colaborador, funcao }
+ *                              (a dimensão `dia` NÃO filtra: o calendário é a
+ *                               própria dimensão do dia)
+ * @returns {Promise<Array<{data:string, dia_semana:number, dia_semana_nome:string,
+ *   tipo_dia:string|null, descricao_evento:string|null,
+ *   faltas:number, previstos:number, inss:number, ferias:number, maternidade:number}>>}
+ */
+async function getCalendarioDiasFatos(dataInicio, dataFim, filtros) {
+  const f = filtros || {};
+  const fStatus = f.status && String(f.status).trim() ? String(f.status).trim() : null;
+  const fMes    = f.mes    && String(f.mes).trim()    ? String(f.mes).trim()    : null;
+  const fColab  = f.colaborador && String(f.colaborador).trim() ? String(f.colaborador).trim().toUpperCase() : null;
+  const fFuncao = f.funcao      && String(f.funcao).trim()      ? String(f.funcao).trim().toUpperCase()      : null;
+
+  // $1/$2 = intervalo dos FATOS (texto, mesmo padrão de getKpisAgregados)
+  // $3/$4 = intervalo da SÉRIE DE DIAS (date) — posições separadas para não
+  //         haver conflito de inferência de tipo entre comparação texto e data.
+  const params = [dataInicio, dataFim, dataInicio, dataFim];
+  let idx = 5;
+  const addParam = (v) => { params.push(v); return '$' + (idx++); };
+
+  const whereClauses = [];
+  if (fMes)    whereClauses.push(`LEFT(ph.data_registro, 7) = ${addParam(fMes)}`);
+  if (fColab)  whereClauses.push(`UPPER(TRIM(ph.nome_funcionario)) = ${addParam(fColab)}`);
+  if (fFuncao) whereClauses.push(`UPPER(TRIM(ph.cargo)) = ${addParam(fFuncao)}`);
+  if (fStatus) whereClauses.push(`UPPER(TRIM(ph.status)) = ${addParam(fStatus.toUpperCase())}`);
+  const extraWhere = whereClauses.length ? 'AND ' + whereClauses.join(' AND ') : '';
+
+  const pFaltas    = addParam(ST_FALTAS);
+  const pPresencas = addParam(ST_PRESENCAS);
+  const pExcluidos = addParam(ST_EXCLUIDOS);
+  const pInss      = addParam(['INSS', 'LICENÇA INSS', 'LICENCA INSS']);
+  const pFerias    = addParam(['FÉRIAS', 'FERIAS']);
+  const pMatern    = addParam(['LICENÇA MATERNIDADE', 'LICENCA MATERNIDADE']);
+
+  // Classificação: PRIORIDADE DA DIMENSÃO (calendario_operacional). Dias sem
+  // linha na dimensão caem no fallback das mesmas regras do gerador de ano
+  // (feriadosNacionaisBrasil → FERIADO; fim de semana → COMPENSADO; senão UTIL),
+  // garantindo marcação mesmo em meses nunca gerados / datas futuras.
+  const feriados = {};
+  const anoIni = parseInt(String(dataInicio).slice(0, 4), 10);
+  const anoFim = parseInt(String(dataFim).slice(0, 4), 10);
+  for (let a = anoIni; a <= anoFim && a <= anoIni + 5; a++) {
+    for (const [dt, nome] of feriadosNacionaisBrasil(a)) feriados[dt] = nome;
+  }
+  const pFeriados = addParam(JSON.stringify(feriados));
+  const exprTipo = `
+      COALESCE(cal.tipo_dia,
+        CASE
+          WHEN (${pFeriados}::jsonb) ? d.data::text THEN 'FERIADO'
+          WHEN EXTRACT(DOW FROM d.data) IN (0, 6)    THEN 'COMPENSADO'
+          ELSE 'UTIL'
+        END)`;
+  const exprDesc = `
+      COALESCE(cal.descricao,
+        COALESCE((${pFeriados}::jsonb) ->> d.data::text,
+          CASE WHEN EXTRACT(DOW FROM d.data) = 0 THEN 'Domingo'
+               WHEN EXTRACT(DOW FROM d.data) = 6 THEN 'Sábado'
+               ELSE NULL END))`;
+
+  const sql = `
+    WITH base AS (
+      SELECT
+        CASE WHEN ph.data_registro ~ '^\\d{4}-\\d{2}-\\d{2}$'
+             THEN ph.data_registro::date END AS data,
+        ph.status,
+        CASE
+          WHEN UPPER(TRIM(ph.status)) = ANY(${pFaltas}::text[])    THEN 'falta'
+          WHEN UPPER(TRIM(ph.status)) = ANY(${pPresencas}::text[]) THEN 'presenca'
+          WHEN UPPER(TRIM(ph.status)) = ANY(${pExcluidos}::text[]) THEN 'excluido'
+          ELSE 'desconhecido'
+        END AS classe
+      FROM ponto_historico ph
+      WHERE ph.data_registro BETWEEN $1 AND $2
+        ${extraWhere}
+    ),
+    fatos AS (
+      SELECT
+        data,
+        COUNT(*) FILTER (WHERE classe = 'falta')::int     AS faltas,
+        COUNT(*) FILTER (WHERE classe <> 'excluido')::int AS previstos,
+        COUNT(*) FILTER (WHERE UPPER(TRIM(status)) = ANY(${pInss}::text[]))::int   AS inss,
+        COUNT(*) FILTER (WHERE UPPER(TRIM(status)) = ANY(${pFerias}::text[]))::int AS ferias,
+        COUNT(*) FILTER (WHERE UPPER(TRIM(status)) = ANY(${pMatern}::text[]))::int AS maternidade
+      FROM base
+      WHERE data IS NOT NULL
+      GROUP BY data
+    ),
+    dias AS (
+      SELECT generate_series($3::date, $4::date, '1 day')::date AS data
+    )
+    SELECT
+      d.data::text AS data,
+      EXTRACT(DOW FROM d.data)::int AS dia_semana,
+      CASE EXTRACT(DOW FROM d.data)::int
+        WHEN 0 THEN 'Domingo' WHEN 1 THEN 'Segunda-feira' WHEN 2 THEN 'Terça-feira'
+        WHEN 3 THEN 'Quarta-feira' WHEN 4 THEN 'Quinta-feira' WHEN 5 THEN 'Sexta-feira'
+        ELSE 'Sábado'
+      END AS dia_semana_nome,
+      ${exprTipo} AS tipo_dia,
+      ${exprDesc} AS descricao_evento,
+      COALESCE(ft.faltas, 0)::int     AS faltas,
+      COALESCE(ft.previstos, 0)::int  AS previstos,
+      COALESCE(ft.inss, 0)::int       AS inss,
+      COALESCE(ft.ferias, 0)::int     AS ferias,
+      COALESCE(ft.maternidade, 0)::int AS maternidade
+    FROM dias d
+    LEFT JOIN calendario_operacional cal ON cal.data = d.data
+    LEFT JOIN fatos ft ON ft.data = d.data
+    ORDER BY d.data
+  `;
+
+  const result = await pool.query(sql, params);
+  return result.rows;
+}
+
+/**
  * upsertDiaOperacional — grava o tipo do dia no calendário operacional.
  *
- * Regra de "Dia Útil / Normal" (reversão de exceção):
- *   - tipo UTIL **sem** descrição → o registro de exceção é REMOVIDO (DELETE),
- *     devolvendo a data ao comportamento padrão (conta no Efetivo Previsto/
- *     Real e no absenteísmo como qualquer dia de trabalho).
- *   - tipo UTIL **com** descrição → o registro é mantido com tipo_dia = 'UTIL'
- *     (a anotação é preservada e o dia deixa de ser exceção).
- *   - FERIADO / COMPENSADO → UPSERT normal.
+ * Regra de "Dia Útil / Normal" (reversão de exceção): UM único statement
+ * composto `INSERT ... ON CONFLICT (data) DO UPDATE` (sem SELECTs preparatórios)
+ * grava tipo_dia = 'UTIL', com ou sem descrição. A linha explícita materializa
+ * a decisão do usuário e é o que impede o fallback de leitura
+ * (getCalendarioDiasFatos) de reclassificar a data como FERIADO/COMPENSADO.
+ * A data volta a contar no Efetivo Previsto/Real e no absenteísmo como
+ * qualquer dia de trabalho — a regra do banco usa COALESCE(tipo_dia, 'UTIL').
+ * FERIADO / COMPENSADO seguem pelo mesmo UPSERT.
  *
  * @param {string} data      - 'YYYY-MM-DD'
  * @param {string} tipo_dia  - 'UTIL' | 'FERIADO' | 'COMPENSADO'
  * @param {string} descricao - opcional
- * @returns {Promise<{data:string, tipo_dia:string, descricao:string|null, removido?:boolean}>}
+ * @returns {Promise<{data:string, tipo_dia:string, descricao:string|null}>}
  */
 async function upsertDiaOperacional(data, tipo_dia, descricao) {
   const tiposValidos = ['UTIL', 'FERIADO', 'COMPENSADO'];
@@ -658,17 +788,7 @@ async function upsertDiaOperacional(data, tipo_dia, descricao) {
   }
   const desc = descricao || null;
 
-  // 1 único statement atômico por ramo (sem SELECTs preparatórios):
-  //   UTIL sem anotação → DELETE da exceção; demais casos → UPSERT composto.
-  // Voltou a ser Dia Útil sem anotação → apaga a exceção do banco
-  if (tipo_dia === 'UTIL' && !desc) {
-    const del = await pool.query(
-      'DELETE FROM calendario_operacional WHERE data = $1::date RETURNING data',
-      [data]
-    );
-    return { data, tipo_dia: 'UTIL', descricao: null, removido: del.rowCount > 0 };
-  }
-
+  // 1 único statement atômico, sem SELECTs preparatórios
   await pool.query(`
     INSERT INTO calendario_operacional (data, tipo_dia, descricao)
     VALUES ($1::date, $2, $3)
@@ -954,6 +1074,7 @@ module.exports = {
   getCalendarioOperacional,
   getCalendarioPeriodoMapa,
   getCalendarioAno,
+  getCalendarioDiasFatos,
   upsertDiaOperacional,
   gerarCalendarioAno,
   getPeriodoLimites,
