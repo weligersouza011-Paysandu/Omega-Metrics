@@ -17,6 +17,7 @@
   var dateFinalInput = document.getElementById('data-final');
   var painel = document.getElementById('painel-contagem');
   var modal = document.getElementById('modal-confirmar-exclusao');
+  var modalCorrigir = document.getElementById('modal-corrigir-registro');
   var confirmInput = document.getElementById('confirmacao-texto');
   var btnConfirmDelete = document.getElementById('btn-confirmar-exclusao');
 
@@ -36,6 +37,7 @@
     setupActions();
     setupModal();
     setupDetalhes();
+    setupModalCorrigir();
 
     if (dateInput && dateInput.value) {
       selectedDate = dateInput.value;
@@ -326,67 +328,152 @@
 
       var dataFmt = formatBR(r.data);
 
-      var optionsHtml = STATUS_OPTIONS.map(function (o) {
-        var sel = (r.status.toUpperCase() === o.toUpperCase()) ? ' selected' : '';
-        return '<option value="' + esc(o) + '"' + sel + '>' + esc(o) + '</option>';
-      }).join('');
-
-      if (!STATUS_OPTIONS.some(function (o) { return o.toUpperCase() === r.status.toUpperCase(); }) && r.status) {
-        optionsHtml += '<option value="' + esc(r.status) + '" selected>' + esc(r.status) + '</option>';
-      }
-
       return '<tr class="' + trCls.join(' ') + '" data-id="' + r.id + '">' +
         '<td><span style="font-weight:600; color:var(--gray-700);">' + dataFmt + '</span></td>' +
         '<td><code>' + esc(matriculaHtml) + '</code>' + badgeTag + '</td>' +
         '<td><strong>' + esc(r.nome) + '</strong></td>' +
-        '<td>' +
-          '<select class="select-status-padrao" data-id="' + r.id + '">' +
-            optionsHtml +
-          '</select>' +
-        '</td>' +
-        '<td>' +
-          '<input type="text" class="input-observacao-padrao" data-id="' + r.id + '" value="' + esc(r.justificativa) + '" placeholder="Observação ou Justificativa...">' +
+        '<td>' + statusBadgeHtml(r) + '</td>' +
+        '<td class="text-center">' +
+          '<button type="button" class="btn btn-sm btn-primary btn-corrigir-registro" data-id="' + r.id + '" title="Corrigir registro">📝 Corrigir</button>' +
         '</td>' +
       '</tr>';
     }).join('');
+  }
+
+  function statusBadgeHtml(r) {
+    var cls = 'badge-success';
+    if (r.isDemitido) cls = 'badge-demitido';
+    else if (r.isAdmitido) cls = 'badge-admitido';
+    else if (r.isAfastado) cls = 'badge-warning';
+    else if (r.isFalta) cls = 'badge-danger';
+
+    return '<span class="badge ' + cls + '">' + esc(r.status || '—') + '</span>';
+  }
+
+  function quadroAtual(r) {
+    if (r.isDemitido) return 'Desligados / Demitidos';
+    if (r.isAdmitido) return 'Admitidos';
+    if (r.isAfastado || r.isFalta) return 'Afastamentos / Ocorrências';
+    return 'Presentes';
   }
 
   function bindQuadrosEvents() {
     var painelDetalhes = document.getElementById('painel-detalhes');
     if (!painelDetalhes) return;
 
-    var selects = painelDetalhes.querySelectorAll('.select-status-padrao');
-    var inputs = painelDetalhes.querySelectorAll('.input-observacao-padrao');
-
-    selects.forEach(function (s) {
-      s.onchange = function (e) {
-        var id = parseInt(e.target.getAttribute('data-id'), 10);
-        var reg = currentRegistros.find(function (x) { return x.id === id; });
-        if (reg) {
-          reg.status = e.target.value;
-          recomputeFlags(reg);
-          renderTodosQuadros();
-          checkChanges();
-        }
+    var botoes = painelDetalhes.querySelectorAll('.btn-corrigir-registro');
+    botoes.forEach(function (btn) {
+      btn.onclick = function (e) {
+        var id = parseInt(e.currentTarget.getAttribute('data-id'), 10);
+        abrirModalCorrigir(id);
       };
     });
+  }
 
-    inputs.forEach(function (i) {
-      i.oninput = function (e) {
-        var id = parseInt(e.target.getAttribute('data-id'), 10);
-        var reg = currentRegistros.find(function (x) { return x.id === id; });
-        if (reg) {
-          reg.justificativa = e.target.value;
-          var rowEl = e.target.closest('tr');
-          if (rowEl) {
-            var mod = (reg.status !== reg.originalStatus || reg.justificativa !== reg.originalJustificativa);
-            if (mod) rowEl.classList.add('row-corrigida');
-            else rowEl.classList.remove('row-corrigida');
-          }
-          checkChanges();
-        }
-      };
+  var registroEditandoId = null;
+
+  function setupModalCorrigir() {
+    var btnFechar = document.getElementById('btn-corrigir-close');
+    var btnCancelar = document.getElementById('btn-corrigir-cancelar');
+    var btnSalvar = document.getElementById('btn-corrigir-salvar');
+
+    if (btnFechar) btnFechar.addEventListener('click', fecharModalCorrigir);
+    if (btnCancelar) btnCancelar.addEventListener('click', fecharModalCorrigir);
+    if (btnSalvar) btnSalvar.addEventListener('click', salvarCorrigirRegistro);
+
+    if (modalCorrigir) {
+      modalCorrigir.addEventListener('click', function (e) {
+        if (e.target === modalCorrigir) fecharModalCorrigir();
+      });
+    }
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && modalCorrigir && modalCorrigir.classList.contains('open')) {
+        fecharModalCorrigir();
+      }
     });
+  }
+
+  function abrirModalCorrigir(id) {
+    var reg = currentRegistros.find(function (x) { return x.id === id; });
+    if (!reg || !modalCorrigir) return;
+
+    registroEditandoId = reg.id;
+
+    var matriculaTxt = reg.matricula || '—';
+    if (matriculaTxt.indexOf('MAT_') === 0) matriculaTxt = matriculaTxt.replace('MAT_', '');
+    if (reg.matricula && reg.matricula.indexOf('NOM_') === 0) matriculaTxt = '—';
+
+    var elNome = document.getElementById('corrigir-nome');
+    var elMatData = document.getElementById('corrigir-matricula-data');
+    var elStatusAtual = document.getElementById('corrigir-status-atual');
+
+    if (elNome) elNome.textContent = reg.nome || '—';
+    if (elMatData) elMatData.textContent = 'Matrícula: ' + matriculaTxt + '  •  Data: ' + formatBR(reg.data);
+
+    if (elStatusAtual) {
+      elStatusAtual.innerHTML =
+        '<span class="badge badge-gray">Status: ' + esc(reg.originalStatus || '—') + '</span>' +
+        '<span class="badge badge-info">Quadro: ' + esc(quadroAtual(reg)) + '</span>' +
+        '<span class="badge badge-gray">Obs.: ' + esc(reg.originalJustificativa || '—') + '</span>';
+    }
+
+    var sel = document.getElementById('modal-status-select');
+    if (sel) {
+      var existe = Array.prototype.some.call(sel.options, function (o) { return o.value === reg.status; });
+      if (!existe && reg.status) {
+        var opt = document.createElement('option');
+        opt.value = reg.status;
+        opt.textContent = reg.status;
+        sel.appendChild(opt);
+      }
+      sel.value = reg.status;
+    }
+
+    var obs = document.getElementById('modal-observacao-input');
+    if (obs) obs.value = reg.justificativa || '';
+
+    modalCorrigir.classList.add('open', 'active', 'show');
+    modalCorrigir.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+    setTimeout(function () { if (sel) sel.focus(); }, 100);
+  }
+
+  function fecharModalCorrigir() {
+    if (!modalCorrigir) return;
+    modalCorrigir.classList.remove('open', 'active', 'show');
+    modalCorrigir.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+    registroEditandoId = null;
+  }
+
+  function salvarCorrigirRegistro() {
+    if (registroEditandoId === null) return;
+
+    var reg = currentRegistros.find(function (x) { return x.id === registroEditandoId; });
+    if (!reg) {
+      fecharModalCorrigir();
+      return;
+    }
+
+    var sel = document.getElementById('modal-status-select');
+    var obs = document.getElementById('modal-observacao-input');
+    var novoStatus = sel ? String(sel.value || '').trim() : '';
+
+    if (!novoStatus) {
+      showToast('Selecione um status válido para aplicar a correção.', 'error');
+      return;
+    }
+
+    reg.status = novoStatus;
+    reg.justificativa = obs ? String(obs.value || '').trim() : '';
+    recomputeFlags(reg);
+
+    fecharModalCorrigir();
+    renderTodosQuadros();
+    checkChanges();
+
+    showToast('Correção aplicada a ' + (reg.nome || 'colaborador') + '. Clique em "💾 Salvar Alterações do Dia" para persistir.', 'success');
   }
 
   function checkChanges() {

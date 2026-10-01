@@ -227,7 +227,7 @@
                           <th style="width: 140px;">Matrícula</th>
                           <th>Nome do Colaborador</th>
                           <th style="width: 220px;">Status</th>
-                          <th style="width: 280px;">Observação / Justificativa</th>
+                          <th style="width: 150px;">Ações</th>
                         </tr>
                       </thead>
                       <tbody id="tbody-admitidos"></tbody>
@@ -254,7 +254,7 @@
                           <th style="width: 140px;">Matrícula</th>
                           <th>Nome do Colaborador</th>
                           <th style="width: 220px;">Status</th>
-                          <th style="width: 280px;">Observação / Justificativa</th>
+                          <th style="width: 150px;">Ações</th>
                         </tr>
                       </thead>
                       <tbody id="tbody-demitidos"></tbody>
@@ -284,7 +284,7 @@
                           <th style="width: 140px;">Matrícula</th>
                           <th>Nome do Colaborador</th>
                           <th style="width: 220px;">Status</th>
-                          <th style="width: 280px;">Observação / Justificativa</th>
+                          <th style="width: 150px;">Ações</th>
                         </tr>
                       </thead>
                       <tbody id="tbody-afastamentos"></tbody>
@@ -311,7 +311,7 @@
                           <th style="width: 140px;">Matrícula</th>
                           <th>Nome do Colaborador</th>
                           <th style="width: 220px;">Status</th>
-                          <th style="width: 280px;">Observação / Justificativa</th>
+                          <th style="width: 150px;">Ações</th>
                         </tr>
                       </thead>
                       <tbody id="tbody-presentes"></tbody>
@@ -384,6 +384,68 @@
         <button type="button" class="btn btn-outline" id="btn-cancelar-exclusao">Cancelar</button>
         <button type="button" class="btn btn-danger" id="btn-confirmar-exclusao" disabled>
           <i class="bi bi-trash3"></i> Excluir definitivamente
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       MODAL: CORREÇÃO DE REGISTRO / INCONSISTÊNCIA
+       ============================================================ -->
+  <div class="modal modal-overlay" id="modal-corrigir-registro" role="dialog" aria-modal="true" aria-labelledby="modal-corrigir-title">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h5 class="modal-title" id="modal-corrigir-title">
+          <i class="bi bi-pencil-square" style="color:var(--primary);"></i>
+          Corrigir Registro / Inconsistência
+        </h5>
+        <button type="button" class="modal-close" id="btn-corrigir-close" aria-label="Fechar">
+          <i class="bi bi-x-lg"></i>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="label">Informações do Colaborador</label>
+          <p class="fw-semibold" id="corrigir-nome">—</p>
+        </div>
+
+        <div class="mb-3">
+          <label class="label">Matrícula / Data</label>
+          <p id="corrigir-matricula-data" class="text-muted small">—</p>
+        </div>
+
+        <div class="mb-3">
+          <label class="label">Detalhe / Status Atual</label>
+          <div id="corrigir-status-atual" class="correcao-atuais"></div>
+        </div>
+
+        <div class="correcao-field">
+          <label class="label" for="modal-status-select">Status <span class="text-danger">*</span></label>
+          <select class="form-control" id="modal-status-select">
+            <option value="Presença / Trabalhado">Presença</option>
+            <option value="Falta Não Justificada">Falta</option>
+            <option value="Atestado Médico">Atestado</option>
+            <option value="Declaração">Declaração</option>
+            <option value="INSS">INSS</option>
+            <option value="Férias">Férias</option>
+            <option value="Licença Maternidade">Maternidade</option>
+            <option value="Desligado / Demitido">Desligado</option>
+          </select>
+          <span class="form-hint">Selecione o status padronizado para a reclassificação correta do colaborador nos quadros.</span>
+        </div>
+
+        <div class="correcao-field" style="margin-bottom:0;">
+          <label class="label" for="modal-observacao-input">Justificativa / Observação</label>
+          <textarea id="modal-observacao-input" rows="3" class="form-control" placeholder="Digite o motivo ou observação..."></textarea>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" id="btn-corrigir-cancelar">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="btn-corrigir-salvar">
+          <i class="bi bi-check"></i>
+          💾 Salvar Correção
         </button>
       </div>
     </div>
