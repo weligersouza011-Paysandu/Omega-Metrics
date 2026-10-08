@@ -1601,7 +1601,27 @@
     return div;
   }
 
+  function alterarMesCalState(delta) {
+    garantirCalAncora();
+    var step = delta < 0 ? -1 : 1;
+    var d = new Date(calState.ano, calState.mes, 1);
+    d.setDate(1);
+    d.setMonth(d.getMonth() + step);
+    calState.ano = d.getFullYear();
+    calState.mes = d.getMonth();
+  }
+
+  function resetMesCalState() {
+    var ref = janelaCalPadrao();
+    calState.ano = ref.getFullYear();
+    calState.mes = ref.getMonth();
+  }
+
+  var navControlsInitialized = false;
   function setupCalendarioControls() {
+    if (navControlsInitialized) return;
+    navControlsInitialized = true;
+
     var prev = document.getElementById('cal-prev');
     var next = document.getElementById('cal-next');
     var reset = document.getElementById('cal-ano');
@@ -1614,9 +1634,10 @@
       // 2. Determina o novo mês alvo da Matriz/Calendário
       var target = getMatrizMesAno();
       var firstDay = new Date(target.ano, target.mes, 1);
+      firstDay.setDate(1);
       var lastDay = new Date(target.ano, target.mes + 1, 0);
-      var isoInicio = firstDay.toISOString().slice(0, 10);
-      var isoFim = lastDay.toISOString().slice(0, 10);
+      var isoInicio = isoDe(firstDay);
+      var isoFim = isoDe(lastDay);
 
       // 3. Renderiza imediatamente com dados existentes (resposta visual rápida)
       if (calViewMode === 'matriz') {
@@ -1627,12 +1648,13 @@
 
       // 4. Busca isolada: só atualiza mapPorDia e re-renderiza a view ativa.
       //    NÃO modifica currentRange global nem reprocessa gráficos de KPI.
-      var url = API_URL + '/api/dashboard/kpis?dataInicio=' + isoInicio + '&dataFim=' + isoFim;
+      //    Preserva os filtros globais ativos (status, colaborador, funcao, motivo, justificativa).
+      var url = API_URL + '/api/dashboard/kpis?dataInicio=' + isoInicio + '&dataFim=' + isoFim + crossFilterQuery();
       fetch(url)
         .then(function (res) { return res.json(); })
         .then(function (data) {
           if (!data || !data.success) return;
-          var g = (data.graficos || data.data && data.data.graficos) || {};
+          var g = (data.graficos || (data.data && data.data.graficos)) || {};
           // Atualiza apenas o mapa de dias sem tocar cross-filters ou gráficos
           var dias = g.absenteismoPorDia || [];
           var novoMapa = {};
@@ -1651,36 +1673,48 @@
         });
     }
 
+    function bindNavBtn(el, handler) {
+      if (!el || el.dataset.navBound === '1') return;
+      el.dataset.navBound = '1';
+      var clone = el.cloneNode(true);
+      if (el.parentNode) el.parentNode.replaceChild(clone, el);
+      clone.addEventListener('click', handler);
+    }
+
     if (prev) {
-      prev.addEventListener('click', function () {
-        garantirCalAncora();
-        calState.mes -= 1;
-        if (calState.mes < 0) {
-          calState.mes += 12;
-          calState.ano -= 1;
-        }
+      bindNavBtn(prev, function () {
+        alterarMesCalState(-1);
         dispatchNavChange();
       });
     }
     if (next) {
-      next.addEventListener('click', function () {
-        garantirCalAncora();
-        calState.mes += 1;
-        if (calState.mes >= 12) {
-          calState.mes -= 12;
-          calState.ano += 1;
-        }
+      bindNavBtn(next, function () {
+        alterarMesCalState(1);
         dispatchNavChange();
       });
     }
     if (reset) {
-      reset.addEventListener('click', function () {
-        var ref = janelaCalPadrao();
-        calState.ano = ref.getFullYear();
-        calState.mes = ref.getMonth();
+      bindNavBtn(reset, function () {
+        resetMesCalState();
         dispatchNavChange();
       });
     }
+
+    var prevs = document.querySelectorAll('.matriz-nav-prev, #btnPrevMonth');
+    prevs.forEach(function (btn) {
+      bindNavBtn(btn, function () {
+        alterarMesCalState(-1);
+        dispatchNavChange();
+      });
+    });
+
+    var nexts = document.querySelectorAll('.matriz-nav-next, #btnNextMonth');
+    nexts.forEach(function (btn) {
+      bindNavBtn(btn, function () {
+        alterarMesCalState(1);
+        dispatchNavChange();
+      });
+    });
   }
 
   // EVENT DELEGATION: um único listener no container do calendário.
@@ -1752,7 +1786,10 @@
   var calViewMode = 'cal'; // 'cal' ou 'matriz'
   var mesesNomeCompleto = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 
+  var navToggleInitialized = false;
   function setupCalViewToggle() {
+    if (navToggleInitialized) return;
+    navToggleInitialized = true;
     var btnCal = document.getElementById('btn-view-cal');
     var btnMatriz = document.getElementById('btn-view-matriz');
     if (!btnCal || !btnMatriz) return;
@@ -2255,7 +2292,10 @@
   }
 
   /* ---- EXPORTAÇÃO EXCEL (CSV) ---- */
+  var exportMatrizInitialized = false;
   function setupMatrizExport() {
+    if (exportMatrizInitialized) return;
+    exportMatrizInitialized = true;
     var btnExcel = document.getElementById('btn-export-matriz-excel');
     var btnPdf = document.getElementById('btn-export-matriz-pdf');
 

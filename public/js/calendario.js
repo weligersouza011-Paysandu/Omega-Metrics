@@ -1,4 +1,4 @@
-﻿/* =========================================================
+/* =========================================================
    calendario.js — Calendário Operacional · Omega Metrics
    v2 — Visão Anual 12 meses + Auto-preenchimento + Compacto
    ========================================================= */
@@ -45,16 +45,25 @@ const proxTipo = tipo => TIPOS[(TIPOS.indexOf(tipo) + 1) % TIPOS.length];
 /* ------------------------------------------------------------------ */
 /* INIT                                                                 */
 /* ------------------------------------------------------------------ */
+let calNavInitialized = false;
+
 document.addEventListener('DOMContentLoaded', () => {
   preencherSeletorAno();
-  document.getElementById('sel-mes').value = mesAtual;
-  document.getElementById('sel-ano').value = anoAtual;
+  const selMes = document.getElementById('sel-mes');
+  const selAno = document.getElementById('sel-ano');
+  if (selMes) selMes.value = mesAtual;
+  if (selAno) selAno.value = anoAtual;
 
-  /* Controles de navegação */
-  document.getElementById('sel-mes').addEventListener('change',   onNavChange);
-  document.getElementById('sel-ano').addEventListener('change',   onNavChange);
-  document.getElementById('btn-mes-ant').addEventListener('click',  () => navegarMes(-1));
-  document.getElementById('btn-mes-prox').addEventListener('click', () => navegarMes(+1));
+  /* Controles de navegação com vinculação única */
+  if (!calNavInitialized) {
+    calNavInitialized = true;
+    if (selMes) selMes.addEventListener('change',   onNavChange);
+    if (selAno) selAno.addEventListener('change',   onNavChange);
+    const btnAnt = document.getElementById('btn-mes-ant');
+    const btnProx = document.getElementById('btn-mes-prox');
+    if (btnAnt) btnAnt.addEventListener('click',  () => navegarMes(-1));
+    if (btnProx) btnProx.addEventListener('click', () => navegarMes(+1));
+  }
 
   /* Alternador de visão */
   document.getElementById('btn-modo-mensal').addEventListener('click', () => setModo('mensal'));
@@ -102,17 +111,26 @@ function preencherSeletorAno() {
 }
 
 function onNavChange() {
-  mesAtual = parseInt(document.getElementById('sel-mes').value, 10);
-  anoAtual = parseInt(document.getElementById('sel-ano').value, 10);
+  const selMes = document.getElementById('sel-mes');
+  const selAno = document.getElementById('sel-ano');
+  if (selMes) mesAtual = parseInt(selMes.value, 10);
+  if (selAno) anoAtual = parseInt(selAno.value, 10);
   carregarEExibir();
 }
 
 function navegarMes(delta) {
-  mesAtual += delta;
-  if (mesAtual > 12) { mesAtual = 1;  anoAtual++; }
-  if (mesAtual < 1)  { mesAtual = 12; anoAtual--; }
-  document.getElementById('sel-mes').value = mesAtual;
-  document.getElementById('sel-ano').value = anoAtual;
+  const step = delta < 0 ? -1 : 1;
+  const d = new Date(anoAtual, mesAtual - 1, 1);
+  d.setDate(1);
+  d.setMonth(d.getMonth() + step);
+  mesAtual = d.getMonth() + 1;
+  anoAtual = d.getFullYear();
+
+  const selMes = document.getElementById('sel-mes');
+  const selAno = document.getElementById('sel-ano');
+  if (selMes) selMes.value = mesAtual;
+  if (selAno) selAno.value = anoAtual;
+
   carregarEExibir();
 }
 
