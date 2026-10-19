@@ -12,7 +12,11 @@ let pool = null;
  * Cria e configura o Pool do PostgreSQL (Neon) com resiliência total e reconexão automática.
  */
 function createPgPool(customUrl) {
-  const connectionString = (customUrl || process.env.DATABASE_URL || FALLBACK_NEON_DATABASE_URL).trim();
+  // Prioridade: URL explícita → process.env.DATABASE_URL → Neon oficial.
+  // Nunca cai para SQLite: sem URL válida, conecta obrigatoriamente no Neon.
+  const connectionString = [customUrl, process.env.DATABASE_URL, FALLBACK_NEON_DATABASE_URL]
+    .map((url) => (typeof url === 'string' ? url.trim() : ''))
+    .find((url) => url.length > 0) || FALLBACK_NEON_DATABASE_URL;
 
   const pgPool = new Pool({
     connectionString,
@@ -45,7 +49,14 @@ function initDatabase(pgPool) {
     });
   }
 
-  return createSchema().then(() => seedMotivosDesligamento());
+  return createSchema()
+    .then(() => seedMotivosDesligamento())
+    .then(async () => {
+      const countResult = await pool.query('SELECT COUNT(*) AS c FROM ponto_historico');
+      const totalRegistros = parseInt(countResult.rows[0]?.c || 0, 10);
+      console.log(`🐘 Conectado ao Neon PostgreSQL | Total de Registros de Ponto: ${totalRegistros}`);
+      return totalRegistros;
+    });
 }
 
 function getPool() {

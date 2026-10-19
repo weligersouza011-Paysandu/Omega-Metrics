@@ -1035,7 +1035,8 @@ async function start() {
     const health = await checkDatabaseHealth();
     console.log(`📊 [Diagnóstico Inicial]: Banco: ${health.banco} | Conexão: ${health.conexao_ativa ? 'ATIVA' : 'INATIVA'} | Ponto: ${health.total_registros_ponto.toLocaleString('pt-BR')} registros | Calendário: ${health.total_dias_calendario} dias`);
   } catch (err) {
-    console.error('❌ Falha crítica ao conectar/inicializar o PostgreSQL (Neon):', err.message);
+    console.error('❌ [FATAL] Falha ao conectar/inicializar o Neon PostgreSQL. A aplicação NÃO iniciará com fallback SQLite.');
+    console.error('❌ [FATAL] Detalhes:', err && err.stack ? err.stack : err);
     process.exit(1);
   }
 
