@@ -1,21 +1,98 @@
-const { types } = require('pg');
+const { Pool, types } = require('pg');
+
+// String de conexão oficial com fallback para Neon Pooler
+const FALLBACK_NEON_DATABASE_URL = "postgresql://neondb_owner:npg_7PTjCWBv0xSs@ep-polished-bread-b43m7uaq-pooler.c-6.us-east-2.aws.neon.tech/neondb?sslmode=require";
 
 // COUNT(*) retorna int8 — padroniza como Number para manter a matemática dos KPIs
 types.setTypeParser(20, (val) => parseInt(val, 10));
 
 let pool = null;
 
+/**
+ * Cria e configura o Pool do PostgreSQL (Neon) com resiliência total e reconexão automática.
+ */
+function createPgPool(customUrl) {
+  const connectionString = (customUrl || process.env.DATABASE_URL || FALLBACK_NEON_DATABASE_URL).trim();
+
+  const pgPool = new Pool({
+    connectionString,
+    ssl: { rejectUnauthorized: false },
+    max: 10,                       // Limite ideal para instâncias no Neon Pooler
+    idleTimeoutMillis: 30000,      // Fecha conexões ociosas após 30s
+    connectionTimeoutMillis: 10000 // Timeout de 10s para adquirir conexão
+  });
+
+  // Tratamento de conexões ociosas cortadas pelo Neon Pooler para evitar crash da aplicação
+  pgPool.on('error', (err, client) => {
+    console.error('⚠️ [PostgreSQL Pool] Conexão ociosa cortada pelo Neon Pooler (reconexão automática ativa):', err.message);
+  });
+
+  return pgPool;
+}
+
 function initDatabase(pgPool) {
-  pool = pgPool;
+  if (pgPool) {
+    pool = pgPool;
+  } else if (!pool) {
+    pool = createPgPool();
+  }
+
+  // Garante que o pool tenha listener de resiliência ativo
+  if (pool && !pool._resilienceConfigured) {
+    pool._resilienceConfigured = true;
+    pool.on('error', (err) => {
+      console.error('⚠️ [PostgreSQL Pool] Notificação de evento no Pool (Neon):', err.message);
+    });
+  }
+
   return createSchema().then(() => seedMotivosDesligamento());
 }
 
 function getPool() {
+  if (!pool) {
+    pool = createPgPool();
+  }
   return pool;
 }
 
+/**
+ * Checagem de integridade e métricas do banco de dados para a rota /api/healthcheck
+ */
+async function checkDatabaseHealth() {
+  try {
+    const activePool = getPool();
+    const [pontoRes, calRes] = await Promise.all([
+      activePool.query('SELECT COUNT(*) as c FROM ponto_historico'),
+      activePool.query('SELECT COUNT(*) as c FROM calendario_operacional')
+    ]);
+
+    const totalPonto = parseInt(pontoRes.rows[0]?.c || 0, 10);
+    const totalCal = parseInt(calRes.rows[0]?.c || 0, 10);
+
+    return {
+      status: 'ok',
+      banco: 'PostgreSQL (Neon)',
+      conexao_ativa: true,
+      total_registros_ponto: totalPonto,
+      total_dias_calendario: totalCal,
+      timestamp: new Date().toISOString()
+    };
+  } catch (err) {
+    console.error('⚠️ [Healthcheck DB Error]:', err.message);
+    return {
+      status: 'error',
+      banco: 'PostgreSQL (Neon)',
+      conexao_ativa: false,
+      total_registros_ponto: 0,
+      total_dias_calendario: 0,
+      error: err.message,
+      timestamp: new Date().toISOString()
+    };
+  }
+}
+
 async function withTransaction(fn) {
-  const client = await pool.connect();
+  const client = await getPool().connect();
   try {
     await client.query('BEGIN');
     const result = await fn(client);
@@ -86,6 +163,24 @@ async function createSchema() {
     CREATE INDEX IF NOT EXISTS idx_deslig_data ON desligamentos_justificados(data_desligamento);
     CREATE INDEX IF NOT EXISTS idx_deslig_funcionario ON desligamentos_justificados(chave_funcionario);
 
+    CREATE TABLE IF NOT EXISTS desligamentos_historico (
+      id SERIAL PRIMARY KEY,
+      data_desligamento TEXT NOT NULL,
+      chave_funcionario TEXT NOT NULL,
+      nome_funcionario TEXT NOT NULL,
+      cargo TEXT,
+      departamento TEXT,
+      campo_detectado TEXT,
+      valor_original TEXT,
+      justificativa_rh TEXT,
+      conta_turnover INTEGER DEFAULT 1,
+      lote_id TEXT,
+      criado_em TEXT,
+      UNIQUE (data_desligamento, chave_funcionario)
+    );
+    CREATE INDEX IF NOT EXISTS idx_deslig_hist_data ON desligamentos_historico(data_desligamento);
+    CREATE INDEX IF NOT EXISTS idx_deslig_hist_funcionario ON desligamentos_historico(chave_funcionario);
+
     CREATE TABLE IF NOT EXISTS motivos_desligamento (
       codigo TEXT PRIMARY KEY,
       label TEXT NOT NULL,
@@ -106,6 +201,18 @@ async function createSchema() {
     CREATE INDEX IF NOT EXISTS idx_calendario_data ON calendario_operacional (data);
   `);
   await pool.query('ALTER TABLE ponto_historico ADD COLUMN IF NOT EXISTS cid TEXT');
+  
+  // Sincroniza dados históricos para desligamentos_historico de forma idempotente
+  await pool.query(`
+    INSERT INTO desligamentos_historico (
+      id, data_desligamento, chave_funcionario, nome_funcionario, cargo, departamento,
+      campo_detectado, valor_original, justificativa_rh, conta_turnover, lote_id, criado_em
+    )
+    SELECT id, data_desligamento, chave_funcionario, nome_funcionario, cargo, departamento,
+      campo_detectado, valor_original, justificativa_rh, conta_turnover, lote_id, criado_em
+    FROM desligamentos_justificados
+    ON CONFLICT (data_desligamento, chave_funcionario) DO NOTHING;
+  `);
 }
 
 async function seedMotivosDesligamento() {
@@ -309,6 +416,24 @@ async function insertDesligamentosJustificados(desligamentos, loteId) {
       criado_em = excluded.criado_em
   `;
 
+  const upsertHistoricoSql = `
+    INSERT INTO desligamentos_historico (
+      data_desligamento, chave_funcionario, nome_funcionario, cargo, departamento,
+      campo_detectado, valor_original, justificativa_rh, conta_turnover,
+      lote_id, criado_em
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    ON CONFLICT(data_desligamento, chave_funcionario) DO UPDATE SET
+      nome_funcionario = excluded.nome_funcionario,
+      cargo = excluded.cargo,
+      departamento = excluded.departamento,
+      campo_detectado = excluded.campo_detectado,
+      valor_original = excluded.valor_original,
+      justificativa_rh = excluded.justificativa_rh,
+      conta_turnover = excluded.conta_turnover,
+      lote_id = excluded.lote_id,
+      criado_em = excluded.criado_em
+  `;
+
   return withTransaction(async (client) => {
     let count = 0;
     const datasTocadas = new Set();
@@ -324,7 +449,7 @@ async function insertDesligamentosJustificados(desligamentos, loteId) {
       if (!dataDeslig) continue;
       const chave = normalizeFuncionarioKey(d.nomeFuncionario, d.matricula);
 
-      await client.query(upsertSql, [
+      const params = [
         dataDeslig,
         chave,
         d.nomeFuncionario || '',
@@ -336,7 +461,10 @@ async function insertDesligamentosJustificados(desligamentos, loteId) {
         contaTurnover,
         loteId,
         nowIso()
-      ]);
+      ];
+
+      await client.query(upsertSql, params);
+      await client.query(upsertHistoricoSql, params);
       count++;
       datasTocadas.add(dataDeslig);
     }
@@ -540,13 +668,13 @@ async function getPontoHistorico(dataInicio, dataFim) {
 async function getDesligamentosHistorico(dataInicio, dataFim) {
   if (!dataInicio || !dataFim) {
     const result = await pool.query(`
-      SELECT * FROM desligamentos_justificados
+      SELECT * FROM desligamentos_historico
       ORDER BY data_desligamento, nome_funcionario
     `);
     return result.rows;
   }
   const result = await pool.query(`
-    SELECT * FROM desligamentos_justificados
+    SELECT * FROM desligamentos_historico
     WHERE data_desligamento BETWEEN $1 AND $2
     ORDER BY data_desligamento, nome_funcionario
   `, [dataInicio, dataFim]);
@@ -977,6 +1105,9 @@ async function deleteByDate(data) {
     const deslig = await client.query(
       'DELETE FROM desligamentos_justificados WHERE data_desligamento = $1', [data]
     );
+    await client.query(
+      'DELETE FROM desligamentos_historico WHERE data_desligamento = $1', [data]
+    );
     const restantePonto = await client.query(
       'SELECT COUNT(*) as c FROM ponto_historico WHERE data_registro = $1', [data]
     );
@@ -1057,6 +1188,9 @@ async function updatePontoBatch(alteracoes) {
 }
 
 module.exports = {
+  FALLBACK_NEON_DATABASE_URL,
+  createPgPool,
+  checkDatabaseHealth,
   initDatabase,
   getPool,
   getDb: () => pool,

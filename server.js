@@ -13,7 +13,8 @@ const { Pool } = require('pg');
 // Invalidado automaticamente ao confirmar uma nova importação.
 const kpiCache = new NodeCache({ stdTTL: 60, checkperiod: 90, useClones: false });
 
-const { initDatabase, createLote, getLote, confirmLote,
+const { initDatabase, createPgPool, checkDatabaseHealth, FALLBACK_NEON_DATABASE_URL,
+  createLote, getLote, confirmLote,
   upsertPontoHistorico, insertDesligamentosJustificados, updateCalendario,
   getPontoHistorico, getPontoParaTurnover, getKpisAgregados,
   getDesligamentosHistorico, getCalendarioDatas,
@@ -168,10 +169,7 @@ function montarDiaCalendario(r) {
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
-});
+const pool = createPgPool();
 
 app.use(cors());
 // Compressão Gzip/Deflate para todos os endpoints (payloads JSON ≤ 1 KB são
@@ -474,7 +472,7 @@ app.get('/api/dashboard/detalhe-dia', async (req, res) => {
     // The previous parsing maps 'cid' directly.
     const safeQuery = `
       SELECT
-        matricula,
+        chave_funcionario AS matricula,
         nome_funcionario,
         status,
         COALESCE(cid, '') AS justificativa
@@ -768,8 +766,26 @@ app.get('/api/dashboard/kpis', async (req, res) => {
   }
 });
 
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+/**
+ * GET /api/healthcheck e GET /api/health
+ * Diagnóstico de integridade da aplicação e conexão ativa com PostgreSQL (Neon).
+ */
+app.get(['/api/healthcheck', '/api/health'], async (req, res) => {
+  try {
+    const health = await checkDatabaseHealth();
+    const statusCode = health.conexao_ativa ? 200 : 503;
+    return res.status(statusCode).json(health);
+  } catch (err) {
+    console.error('Erro no healthcheck:', err);
+    return res.status(500).json({
+      status: 'error',
+      banco: 'PostgreSQL (Neon)',
+      conexao_ativa: false,
+      total_registros_ponto: 0,
+      total_dias_calendario: 0,
+      error: err.message
+    });
+  }
 });
 
 /* ============================================================
@@ -994,18 +1010,40 @@ app.post('/api/calendario-operacional/gerar-ano', async (req, res) => {
   }
 });
 
+// Middleware global de captura de erros (Crash Prevention)
+app.use((err, req, res, next) => {
+  console.error('⚠️ [Express Unhandled Error]:', err);
+  if (!res.headersSent) {
+    res.status(500).json({ success: false, error: err.message || 'Erro interno no servidor' });
+  }
+});
+
+// Prevenção de término do processo por erros de rede ou cortes de socket no pooler
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('⚠️ [CRASH PREVENTED] Unhandled Rejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('⚠️ [CRASH PREVENTED] Uncaught Exception:', err);
+});
+
 async function start() {
   try {
+    console.log('🔄 Inicializando conexão com PostgreSQL (Neon Pooler)...');
     await initDatabase(pool);
-    console.log('Conectado ao PostgreSQL (Neon) — schema verificado.');
+    console.log('✅ Conexão estabelecida com sucesso — Schema e tabelas verificados.');
+
+    const health = await checkDatabaseHealth();
+    console.log(`📊 [Diagnóstico Inicial]: Banco: ${health.banco} | Conexão: ${health.conexao_ativa ? 'ATIVA' : 'INATIVA'} | Ponto: ${health.total_registros_ponto.toLocaleString('pt-BR')} registros | Calendário: ${health.total_dias_calendario} dias`);
   } catch (err) {
-    console.error('Falha ao conectar/inicializar o PostgreSQL:', err.message);
+    console.error('❌ Falha crítica ao conectar/inicializar o PostgreSQL (Neon):', err.message);
     process.exit(1);
   }
 
   app.listen(PORT, () => {
-    console.log(`Omega Metrics v2 rodando em http://localhost:${PORT}`);
-    console.log('Banco de dados: PostgreSQL (Neon)');
+    console.log(`🚀 Omega Metrics v2 rodando em http://localhost:${PORT}`);
+    console.log(`🌐 Ambiente: ${process.env.NODE_ENV || 'production'}`);
+    console.log('🗄️  Banco de Dados: PostgreSQL (Neon Pooler) — Fallback SQLite DESATIVADO');
+    console.log('🩺 Diagnóstico de saúde disponível em: /api/healthcheck');
   });
 }
 
