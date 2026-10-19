@@ -10,11 +10,6 @@
     }
   } catch (e) { /* ignore */ }
 
-  // Base dinâmica da API: local vazio; hospedado (Render/GH Pages) aponta ao backend
-  var API_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-    ? ''
-    : 'https://omega-metrics1.onrender.com';
-
   // Configurações Globais & Cores do Design System
   var CORES = {
     verde: '#10b981',
@@ -433,7 +428,7 @@
 
   function loadDatasDisponiveis() {
     showLoading();
-    fetch(API_URL + '/api/dashboard/datas-disponiveis')
+    fetch('/api/dashboard/datas-disponiveis')
       .then(function (res) { return res.json(); })
       .then(function (data) {
         if (!data.success || !data.datas || !data.datas.length) {
@@ -501,7 +496,7 @@
     var ctrl = new AbortController();
     inflightCtrl = ctrl;
 
-    var url = API_URL + '/api/dashboard/kpis?dataInicio=' + currentRange.inicio + '&dataFim=' + currentRange.fim;
+    var url = '/api/dashboard/kpis?dataInicio=' + currentRange.inicio + '&dataFim=' + currentRange.fim;
     url += crossFilterQuery();
 
     // Modal Ômega: só no carregamento inicial (fora do caminho "background",
@@ -1408,7 +1403,7 @@
     var entrada = calBaseCache[chave];
     if (entrada && (entrada.promessa || Date.now() - entrada.ts < CAL_BASE_TTL_MS)) return;
 
-    var promessa = fetch(API_URL + '/api/calendario-operacional/painel?dataInicio=' + ano + '-01-01&dataFim=' + ano + '-12-31')
+    var promessa = fetch('/api/calendario-operacional/painel?dataInicio=' + ano + '-01-01&dataFim=' + ano + '-12-31')
       .then(function (resp) { return resp.json(); })
       .then(function (json) {
         calBaseCache[chave] = { ts: Date.now(), promessa: null };
@@ -1649,7 +1644,7 @@
       // 4. Busca isolada: só atualiza mapPorDia e re-renderiza a view ativa.
       //    NÃO modifica currentRange global nem reprocessa gráficos de KPI.
       //    Preserva os filtros globais ativos (status, colaborador, funcao, motivo, justificativa).
-      var url = API_URL + '/api/dashboard/kpis?dataInicio=' + isoInicio + '&dataFim=' + isoFim + crossFilterQuery();
+      var url = '/api/dashboard/kpis?dataInicio=' + isoInicio + '&dataFim=' + isoFim + crossFilterQuery();
       fetch(url)
         .then(function (res) { return res.json(); })
         .then(function (data) {
@@ -1863,7 +1858,7 @@
     }
 
     calMatrizCache.chave = chave;
-    calMatrizCache.promessa = fetch(API_URL + '/api/calendario-operacional?mes=' + (mes + 1) + '&ano=' + ano)
+    calMatrizCache.promessa = fetch('/api/calendario-operacional?mes=' + (mes + 1) + '&ano=' + ano)
       .then(function (resp) { return resp.json(); })
       .then(function (payload) {
         // A navegação mudou de mês enquanto este fetch estava em voo

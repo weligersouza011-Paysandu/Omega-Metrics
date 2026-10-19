@@ -1,10 +1,43 @@
 (function () {
   'use strict';
 
-  // Base dinâmica da API: local vazio; hospedado (Render/GH Pages) aponta ao backend
-  var API_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-    ? ''
-    : 'https://omega-metrics1.onrender.com';
+  // Rotas relativas + retry exponencial (1 tentativa) para instabilidade de rede.
+  var RETRY_DELAY_MS = 1000;
+
+  function esperar(ms) {
+    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+  }
+
+  function fetchComRetry(url, options) {
+    var restantes = 1;
+    function tentar() {
+      return fetch(url, options)
+        .catch(function (err) {
+          if (restantes > 0) {
+            restantes--;
+            return esperar(RETRY_DELAY_MS).then(tentar);
+          }
+          throw err;
+        })
+        .then(function (res) {
+          if (restantes > 0 && (res.status === 502 || res.status === 503 || res.status === 504)) {
+            restantes--;
+            return esperar(RETRY_DELAY_MS).then(tentar);
+          }
+          return res;
+        });
+    }
+    return tentar();
+  }
+
+  function mensagemErroRede(err) {
+    var msg = err && err.message ? String(err.message) : '';
+    if (err && err.name === 'AbortError') return 'Requisição cancelada.';
+    if (!msg || /failed to fetch|network ?error|load failed/i.test(msg)) {
+      return 'Falha de conexão com o servidor. Verifique sua internet e tente novamente.';
+    }
+    return msg;
+  }
 
   var selectedDate = null;
   var lastCounts = null;
@@ -153,10 +186,10 @@
     hideError();
     setLoading(true, dataFim ? 'Consultando registros do período...' : 'Consultando registros do dia...');
 
-    var url = API_URL + '/api/dados/checar?data=' + encodeURIComponent(data);
+    var url = '/api/dados/checar?data=' + encodeURIComponent(data);
     if (dataFim) url += '&dataFim=' + encodeURIComponent(dataFim);
 
-    fetch(url)
+    fetchComRetry(url)
       .then(function (r) { return r.json(); })
       .then(function (json) {
         setLoading(false);
@@ -169,7 +202,7 @@
       })
       .catch(function (err) {
         setLoading(false);
-        showError('Falha de comunicação com o servidor: ' + err.message);
+        showError(mensagemErroRede(err));
       });
   }
 
@@ -193,7 +226,7 @@
     var data = getDate();
     var dataFim = getDateFim();
     if (!data || !lastCounts || lastCounts.total === 0) return;
-    var url = API_URL + '/api/dados/download?data=' + encodeURIComponent(data);
+    var url = '/api/dados/download?data=' + encodeURIComponent(data);
     if (dataFim) url += '&dataFim=' + encodeURIComponent(dataFim);
     window.location.href = url;
   }
@@ -507,7 +540,7 @@
     if (!alteracoes.length) return;
 
     setLoading(true, 'Salvando alterações...');
-    fetch(API_URL + '/api/dados/atualizar', {
+    fetchComRetry('/api/dados/atualizar', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ alteracoes: alteracoes })
@@ -524,7 +557,7 @@
       })
       .catch(function (err) {
         setLoading(false);
-        showError('Falha de comunicação com o servidor: ' + err.message);
+        showError(mensagemErroRede(err));
       });
   }
 
@@ -588,7 +621,7 @@
     btnConfirmDelete.disabled = true;
     setLoading(true, 'Excluindo registros do dia...');
 
-    fetch(API_URL + '/api/dados/deletar?data=' + encodeURIComponent(data), { method: 'DELETE' })
+    fetchComRetry('/api/dados/deletar?data=' + encodeURIComponent(data), { method: 'DELETE' })
       .then(function (r) { return r.json(); })
       .then(function (json) {
         setLoading(false);
@@ -607,7 +640,7 @@
       .catch(function (err) {
         setLoading(false);
         fecharModal();
-        showError('Falha na exclusão: ' + err.message);
+        showError('Falha na exclusão: ' + mensagemErroRede(err));
       });
   }
 

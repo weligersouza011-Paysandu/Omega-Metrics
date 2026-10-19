@@ -171,7 +171,10 @@ const PORT = process.env.PORT || 3000;
 
 const pool = createPgPool();
 
-app.use(cors());
+app.use(cors({
+  origin: true,
+  credentials: true
+}));
 // Compressão Gzip/Deflate para todos os endpoints (payloads JSON ≤ 1 KB são
 // ignorados — threshold evita overhead em respostas triviais como /api/health).
 app.use(compression({ threshold: 1024 }));

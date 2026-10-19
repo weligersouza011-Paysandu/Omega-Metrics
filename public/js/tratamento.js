@@ -1,10 +1,43 @@
 (function () {
   'use strict';
 
-  // Base dinâmica da API: local vazio; hospedado (Render/GH Pages) aponta ao backend
-  var API_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-    ? ''
-    : 'https://omega-metrics1.onrender.com';
+  // Rotas relativas + retry exponencial (1 tentativa) para instabilidade de rede.
+  var RETRY_DELAY_MS = 1000;
+
+  function esperar(ms) {
+    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+  }
+
+  function fetchComRetry(url, options) {
+    var restantes = 1;
+    function tentar() {
+      return fetch(url, options)
+        .catch(function (err) {
+          if (restantes > 0) {
+            restantes--;
+            return esperar(RETRY_DELAY_MS).then(tentar);
+          }
+          throw err;
+        })
+        .then(function (res) {
+          if (restantes > 0 && (res.status === 502 || res.status === 503 || res.status === 504)) {
+            restantes--;
+            return esperar(RETRY_DELAY_MS).then(tentar);
+          }
+          return res;
+        });
+    }
+    return tentar();
+  }
+
+  function mensagemErroRede(err) {
+    var msg = err && err.message ? String(err.message) : '';
+    if (err && err.name === 'AbortError') return 'Requisição cancelada.';
+    if (!msg || /failed to fetch|network ?error|load failed/i.test(msg)) {
+      return 'Falha de conexão com o servidor. Verifique sua internet e tente novamente.';
+    }
+    return msg;
+  }
 
   var MAX_PREVIEW_ROWS = 50;
   var MAX_INCONS_ROWS = 200;
@@ -335,7 +368,7 @@
     window.setOmegaProgress(10, 'Lendo e validando arquivo...');
     var pararProgresso = iniciarProgressoOmega();
 
-    fetch(API_URL + '/api/tratamento/processar-arquivo', {
+    fetchComRetry('/api/tratamento/processar-arquivo', {
       method: 'POST',
       body: formData
     })
@@ -379,7 +412,7 @@
       .catch(function (err) {
         pararProgresso();
         window.closeOmegaLoader();
-        showError(err.message || 'Erro ao comunicar com o servidor.');
+        showError(mensagemErroRede(err));
         setLoading(false);
       });
   }
@@ -1071,7 +1104,7 @@
     window.setOmegaProgress(10, 'Lendo e validando arquivo...');
     var pararProgresso = iniciarProgressoOmega();
 
-    fetch(API_URL + '/api/tratamento/confirmar-e-salvar', {
+    fetchComRetry('/api/tratamento/confirmar-e-salvar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ loteId: currentLoteId, justificativas: items, correcoes: correcoes })
@@ -1102,7 +1135,7 @@
       .catch(function (err) {
         pararProgresso();
         window.closeOmegaLoader();
-        alert('Erro ao enviar para o BI: ' + err.message);
+        alert('Erro ao enviar para o BI: ' + mensagemErroRede(err));
         if (spinner) spinner.style.display = 'none';
         text.textContent = prevText;
         updateSendButton();
