@@ -1052,6 +1052,7 @@
     renderTurnoverOperacional(g.turnoverMensal || [], k.turnover || {});
     renderJustificativasDemissao(g.justificativas || []);
     renderComposicaoDesligamentos(g.turnoverMensal || []);
+    renderMatrizTurnover(g.matrizTurnover || null);
 
     // Chips acompanham o estado (inclusive no fallback LocalStorage)
     syncFilterChips();
@@ -3303,13 +3304,695 @@
     }).join('');
   }
 
+  /* ============================================================
+     MATRIZ DETALHADA DE TURNOVER E DESLIGAMENTOS
+     ============================================================ */
+
+  var turnoverMatrizState = {
+    viewMode: 'meses', // 'meses' ou 'dias'
+    mesFocoIdx: -1,
+    data: null,
+    iniciado: false
+  };
+
+  function setupTurnoverMatrizControls() {
+    if (turnoverMatrizState.iniciado) return;
+    turnoverMatrizState.iniciado = true;
+
+    var btnMeses = document.getElementById('btn-turnover-view-meses');
+    var btnDias = document.getElementById('btn-turnover-view-dias');
+    var btnPrev = document.getElementById('turnover-matriz-prev');
+    var btnNext = document.getElementById('turnover-matriz-next');
+    var btnAtual = document.getElementById('turnover-matriz-atual');
+    var btnCloseDrill = document.getElementById('btn-close-turnover-drilldown');
+
+    if (btnMeses) {
+      btnMeses.addEventListener('click', function () {
+        if (turnoverMatrizState.viewMode === 'meses') return;
+        turnoverMatrizState.viewMode = 'meses';
+        btnMeses.classList.add('active');
+        if (btnDias) btnDias.classList.remove('active');
+        renderMatrizTurnover();
+      });
+    }
+
+    if (btnDias) {
+      btnDias.addEventListener('click', function () {
+        if (turnoverMatrizState.viewMode === 'dias') return;
+        turnoverMatrizState.viewMode = 'dias';
+        btnDias.classList.add('active');
+        if (btnMeses) btnMeses.classList.remove('active');
+        if (turnoverMatrizState.data && turnoverMatrizState.data.meses && turnoverMatrizState.data.meses.length) {
+          if (turnoverMatrizState.mesFocoIdx < 0) {
+            turnoverMatrizState.mesFocoIdx = turnoverMatrizState.data.meses.length - 1;
+          }
+        }
+        renderMatrizTurnover();
+      });
+    }
+
+    if (btnPrev) {
+      btnPrev.addEventListener('click', function () {
+        if (!turnoverMatrizState.data || !turnoverMatrizState.data.meses || !turnoverMatrizState.data.meses.length) return;
+        if (turnoverMatrizState.viewMode === 'dias') {
+          if (turnoverMatrizState.mesFocoIdx > 0) {
+            turnoverMatrizState.mesFocoIdx--;
+            renderMatrizTurnover();
+          }
+        } else {
+          var btnCalPrev = document.getElementById('cal-prev');
+          if (btnCalPrev) btnCalPrev.click();
+        }
+      });
+    }
+
+    if (btnNext) {
+      btnNext.addEventListener('click', function () {
+        if (!turnoverMatrizState.data || !turnoverMatrizState.data.meses || !turnoverMatrizState.data.meses.length) return;
+        if (turnoverMatrizState.viewMode === 'dias') {
+          if (turnoverMatrizState.mesFocoIdx < turnoverMatrizState.data.meses.length - 1) {
+            turnoverMatrizState.mesFocoIdx++;
+            renderMatrizTurnover();
+          }
+        } else {
+          var btnCalNext = document.getElementById('cal-next');
+          if (btnCalNext) btnCalNext.click();
+        }
+      });
+    }
+
+    if (btnAtual) {
+      btnAtual.addEventListener('click', function () {
+        if (turnoverMatrizState.data && turnoverMatrizState.data.meses && turnoverMatrizState.data.meses.length) {
+          turnoverMatrizState.mesFocoIdx = turnoverMatrizState.data.meses.length - 1;
+        }
+        var btnCalAno = document.getElementById('cal-ano');
+        if (btnCalAno && turnoverMatrizState.viewMode === 'meses') btnCalAno.click();
+        renderMatrizTurnover();
+      });
+    }
+
+    if (btnCloseDrill) {
+      btnCloseDrill.addEventListener('click', function () {
+        var box = document.getElementById('turnover-drilldown');
+        if (box) box.style.display = 'none';
+      });
+    }
+  }
+
+  function renderMatrizTurnover(payload) {
+    if (payload) {
+      turnoverMatrizState.data = payload;
+    }
+    var dados = turnoverMatrizState.data;
+    var tbl = document.getElementById('table-matriz-turnover');
+    if (!tbl) return;
+
+    if (!dados || !dados.meses || !dados.meses.length) {
+      tbl.innerHTML = '<tbody><tr><td class="text-muted p-3">Nenhum dado de turnover disponível para o período selecionado.</td></tr></tbody>';
+      return;
+    }
+
+    if (turnoverMatrizState.mesFocoIdx < 0 || turnoverMatrizState.mesFocoIdx >= dados.meses.length) {
+      turnoverMatrizState.mesFocoIdx = dados.meses.length - 1;
+    }
+
+    var thead = tbl.querySelector('thead');
+    var tbody = tbl.querySelector('tbody');
+    thead.innerHTML = '';
+    tbody.innerHTML = '';
+
+    if (turnoverMatrizState.viewMode === 'meses') {
+      renderTurnoverMatrizMeses(tbl, thead, tbody, dados);
+    } else {
+      renderTurnoverMatrizDias(tbl, thead, tbody, dados);
+    }
+  }
+
+  function renderTurnoverMatrizMeses(tbl, thead, tbody, dados) {
+    var meses = dados.meses || [];
+    var acum = dados.acumulado || {};
+
+    // Linha 1 Thead: Título / Meses / TOTAL
+    var tr1 = document.createElement('tr');
+    var thTitle = document.createElement('th');
+    thTitle.textContent = 'MATRIZ MENSAL DE TURNOVER';
+    thTitle.style.textAlign = 'left';
+    tr1.appendChild(thTitle);
+
+    meses.forEach(function (m) {
+      var th = document.createElement('th');
+      th.textContent = m.label;
+      th.style.cursor = 'pointer';
+      th.title = 'Clique para ver detalhamento de desligamentos de ' + m.label;
+      th.onclick = function () {
+        abrirDrilldownTurnover('mes', m.chave, 'Desligamentos em ' + m.label);
+      };
+      tr1.appendChild(th);
+    });
+
+    var thTot = document.createElement('th');
+    thTot.textContent = 'TOTAL ACUMULADO';
+    thTot.style.background = '#0f172a';
+    thTot.style.color = '#38bdf8';
+    tr1.appendChild(thTot);
+    thead.appendChild(tr1);
+
+    // Linha 2 Thead: Sub-cabeçalho
+    var tr2 = document.createElement('tr');
+    var thSub = document.createElement('th');
+    thSub.textContent = 'INDICADOR';
+    thSub.style.fontSize = '0.65rem';
+    thSub.style.textAlign = 'left';
+    tr2.appendChild(thSub);
+
+    meses.forEach(function (m) {
+      var th = document.createElement('th');
+      th.textContent = m.chave;
+      th.style.fontSize = '0.62rem';
+      tr2.appendChild(th);
+    });
+
+    var thSubTot = document.createElement('th');
+    thSubTot.textContent = 'PERÍODO';
+    thSubTot.style.fontSize = '0.62rem';
+    tr2.appendChild(thSubTot);
+    thead.appendChild(tr2);
+
+    function addRow(label, getValFn, totVal, cssClassFn, onClickRow) {
+      var tr = document.createElement('tr');
+      var th = document.createElement('th');
+      th.innerHTML = label;
+      tr.appendChild(th);
+
+      meses.forEach(function (m) {
+        var td = document.createElement('td');
+        var val = getValFn(m);
+        td.textContent = val;
+        if (cssClassFn) {
+          var cls = cssClassFn(m, val);
+          if (cls) td.classList.add(cls);
+        }
+        if (onClickRow) {
+          td.style.cursor = 'pointer';
+          td.title = 'Clique para detalhar';
+          td.onclick = function () { onClickRow(m); };
+        }
+        tr.appendChild(td);
+      });
+
+      var tdTot = document.createElement('td');
+      tdTot.textContent = totVal;
+      tdTot.style.fontWeight = '800';
+      if (cssClassFn) {
+        var clsTot = cssClassFn(acum, totVal);
+        if (clsTot) tdTot.classList.add(clsTot);
+      }
+      tr.appendChild(tdTot);
+      tbody.appendChild(tr);
+      return tr;
+    }
+
+    function addGroupHeader(title) {
+      var tr = document.createElement('tr');
+      tr.className = 'row-header-group';
+      var th = document.createElement('th');
+      th.colSpan = meses.length + 2;
+      th.textContent = title;
+      tr.appendChild(th);
+      tbody.appendChild(tr);
+    }
+
+    // 1. Efetivo e Desligamentos Gerais
+    addRow('👥 Efetivo Previsto / Médio', function (m) { return m.efetivoMedio || 0; }, acum.efetivoMedio || 0);
+    addRow('🚪 Total de Desligamentos (Efetivo Real)', function (m) { return m.totalDesligamentos || 0; }, acum.totalDesligamentos || 0, function (m, v) { return v > 0 ? 'cell--vermelho' : 'cell--neutro'; }, function (m) {
+      abrirDrilldownTurnover('mes', m.chave, 'Todos os Desligamentos em ' + m.label);
+    });
+    addRow('⚙️ Turnover Operacional (Gerenciável)', function (m) { return m.turnoverOperacional || 0; }, acum.turnoverOperacional || 0, function (m, v) { return v > 0 ? 'cell--vermelho' : 'cell--neutro'; }, function (m) {
+      abrirDrilldownTurnover('tipo', { mes: m.chave, tipo: 'Operacional' }, 'Turnover Operacional em ' + m.label);
+    });
+    addRow('📉 Redução de Quadro (Efetivo Contratual)', function (m) { return m.reducaoQuadro || 0; }, acum.reducaoQuadro || 0, null, function (m) {
+      abrirDrilldownTurnover('tipo', { mes: m.chave, tipo: 'Redução de Quadro' }, 'Redução de Quadro em ' + m.label);
+    });
+
+    // 2. Justificativas Específicas
+    addGroupHeader('JUSTIFICATIVAS ESPECÍFICAS DE DEMISSÃO');
+    addRow('🔻 Redução de Quadro (Efetivo)', function (m) { return m.justificativas?.reducao_quadro || 0; }, acum.justificativas?.reducao_quadro || 0, null, function (m) {
+      abrirDrilldownTurnover('motivo', { mes: m.chave, codigo: 'reducao_quadro' }, 'Redução de Quadro em ' + m.label);
+    });
+    addRow('⚠️ Alto Índice de Absenteísmo', function (m) { return m.justificativas?.absenteismo || 0; }, acum.justificativas?.absenteismo || 0, function (m, v) { return v > 0 ? 'cell--vermelho' : 'cell--neutro'; }, function (m) {
+      abrirDrilldownTurnover('motivo', { mes: m.chave, codigo: 'absenteismo' }, 'Desligamentos por Absenteísmo em ' + m.label);
+    });
+    addRow('⏱️ Baixa Produtividade', function (m) { return m.justificativas?.baixa_produtividade || 0; }, acum.justificativas?.baixa_produtividade || 0, null, function (m) {
+      abrirDrilldownTurnover('motivo', { mes: m.chave, codigo: 'baixa_produtividade' }, 'Baixa Produtividade em ' + m.label);
+    });
+    addRow('📝 Pedido de Demissão', function (m) { return m.justificativas?.pedido_demissao || 0; }, acum.justificativas?.pedido_demissao || 0, null, function (m) {
+      abrirDrilldownTurnover('motivo', { mes: m.chave, codigo: 'pedido_demissao' }, 'Pedidos de Demissão em ' + m.label);
+    });
+    addRow('🚫 Desvio Comportamental', function (m) { return m.justificativas?.desvio_comportamental || 0; }, acum.justificativas?.desvio_comportamental || 0, null, function (m) {
+      abrirDrilldownTurnover('motivo', { mes: m.chave, codigo: 'desvio_comportamental' }, 'Desvio Comportamental em ' + m.label);
+    });
+
+    // 3. Taxas e Metas
+    addGroupHeader('TAXAS DE TURNOVER E METAS');
+    addRow('📊 Taxa de Turnover Operacional (%)', function (m) {
+      return pctBr(m.turnoverOperacionalPct);
+    }, pctBr(acum.turnoverOperacionalPct), function (m) {
+      var p = m.turnoverOperacionalPct || 0;
+      if (p <= 0) return 'cell--neutro';
+      if (p <= 3.0) return 'cell--verde';
+      if (p <= 5.0) return 'cell--amarelo';
+      return 'cell--vermelho';
+    });
+
+    addRow('📈 Taxa de Turnover Geral (%)', function (m) {
+      return pctBr(m.turnoverGeralPct);
+    }, pctBr(acum.turnoverGeralPct), function (m) {
+      var p = m.turnoverGeralPct || 0;
+      if (p <= 0) return 'cell--neutro';
+      if (p <= 5.0) return 'cell--verde';
+      return 'cell--vermelho';
+    });
+
+    addRow('🎯 Aderência à Meta (≤ 3,00%)', function (m) {
+      return m.turnoverOperacionalPct <= 3.00 ? '✓ Dentro da Meta' : '⚠ Acima da Meta';
+    }, acum.turnoverOperacionalPct <= 3.00 ? '✓ Dentro da Meta' : '⚠ Acima da Meta', function (m) {
+      return (m.turnoverOperacionalPct <= 3.00) ? 'cell--verde' : 'cell--vermelho';
+    });
+
+    // Linha Acumulada
+    var trAcum = document.createElement('tr');
+    trAcum.className = 'row-acumulado';
+    var thAc = document.createElement('th');
+    thAc.textContent = '🏁 Turnover Acumulado Período (%)';
+    trAcum.appendChild(thAc);
+
+    var somaParcial = 0;
+    meses.forEach(function (m) {
+      somaParcial += (m.turnoverOperacional || 0);
+      var td = document.createElement('td');
+      var pctAcumMes = acum.efetivoMedio > 0 ? ((somaParcial / acum.efetivoMedio) * 100) : 0;
+      td.textContent = pctBr(pctAcumMes);
+      trAcum.appendChild(td);
+    });
+
+    var tdTotAc = document.createElement('td');
+    tdTotAc.textContent = pctBr(acum.turnoverOperacionalPct);
+    trAcum.appendChild(tdTotAc);
+    tbody.appendChild(trAcum);
+  }
+
+  function renderTurnoverMatrizDias(tbl, thead, tbody, dados) {
+    var meses = dados.meses || [];
+    var mesFoco = meses[turnoverMatrizState.mesFocoIdx] || meses[meses.length - 1];
+    if (!mesFoco) return;
+
+    var ano = mesFoco.ano;
+    var mesNum = mesFoco.mes;
+    var chaveMes = mesFoco.chave;
+    turnoverMatrizState.nomeMesFoco = mesFoco.label;
+
+    var totalDias = new Date(ano, mesNum, 0).getDate();
+    var diasSemanas = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+    var diasVisiveis = [];
+    for (var d = 1; d <= totalDias; d++) {
+      var dSem = new Date(ano, mesNum - 1, d).getDay();
+      if (dSem === 0 || dSem === 6) continue;
+      var iso = ano + '-' + String(mesNum).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+      diasVisiveis.push({ d: d, dSem: dSem, iso: iso });
+    }
+
+    var desligsMes = (dados.detalhes || []).filter(function (x) {
+      return x.data && x.data.startsWith(chaveMes);
+    });
+
+    var desligsPorDiaMap = {};
+    desligsMes.forEach(function (d) {
+      if (!desligsPorDiaMap[d.data]) {
+        desligsPorDiaMap[d.data] = {
+          total: 0,
+          operacional: 0,
+          reducao: 0,
+          justificativas: { reducao_quadro: 0, absenteismo: 0, baixa_produtividade: 0, pedido_demissao: 0, desvio_comportamental: 0 },
+          registros: []
+        };
+      }
+      var info = desligsPorDiaMap[d.data];
+      info.total++;
+      if (d.tipo === 'Operacional') info.operacional++;
+      else info.reducao++;
+      if (info.justificativas[d.motivoCodigo] !== undefined) {
+        info.justificativas[d.motivoCodigo]++;
+      }
+      info.registros.push(d);
+    });
+
+    var tr1 = document.createElement('tr');
+    var thTitle = document.createElement('th');
+    thTitle.textContent = 'MATRIZ DIÁRIA — ' + mesFoco.label;
+    thTitle.style.textAlign = 'left';
+    tr1.appendChild(thTitle);
+
+    diasVisiveis.forEach(function (item) {
+      var th = document.createElement('th');
+      th.textContent = String(item.d).padStart(2, '0');
+      th.style.cursor = 'pointer';
+      th.title = 'Clique para ver os desligamentos do dia ' + item.iso;
+      th.onclick = function () {
+        abrirDrilldownTurnover('dia', item.iso, 'Desligamentos em ' + item.iso.split('-').reverse().join('/'));
+      };
+      tr1.appendChild(th);
+    });
+
+    var thTot = document.createElement('th');
+    thTot.textContent = 'TOTAL MÊS';
+    thTot.style.background = '#0f172a';
+    thTot.style.color = '#38bdf8';
+    tr1.appendChild(thTot);
+    thead.appendChild(tr1);
+
+    var tr2 = document.createElement('tr');
+    var thSub = document.createElement('th');
+    thSub.textContent = 'INDICADOR';
+    thSub.style.fontSize = '0.65rem';
+    thSub.style.textAlign = 'left';
+    tr2.appendChild(thSub);
+
+    diasVisiveis.forEach(function (item) {
+      var th = document.createElement('th');
+      th.textContent = diasSemanas[item.dSem];
+      th.style.fontSize = '0.62rem';
+      tr2.appendChild(th);
+    });
+
+    var thSubTot = document.createElement('th');
+    thSubTot.textContent = mesFoco.label;
+    thSubTot.style.fontSize = '0.62rem';
+    tr2.appendChild(thSubTot);
+    thead.appendChild(tr2);
+
+    function addRowDia(label, getValFn, totVal, cssClassFn, onClickRow) {
+      var tr = document.createElement('tr');
+      var th = document.createElement('th');
+      th.innerHTML = label;
+      tr.appendChild(th);
+
+      diasVisiveis.forEach(function (item) {
+        var td = document.createElement('td');
+        var val = getValFn(item);
+        td.textContent = val;
+        if (cssClassFn) {
+          var cls = cssClassFn(item, val);
+          if (cls) td.classList.add(cls);
+        }
+        if (onClickRow) {
+          td.style.cursor = 'pointer';
+          td.title = 'Clique para detalhar';
+          td.onclick = function () { onClickRow(item); };
+        }
+        tr.appendChild(td);
+      });
+
+      var tdTot = document.createElement('td');
+      tdTot.textContent = totVal;
+      tdTot.style.fontWeight = '800';
+      if (cssClassFn) {
+        var clsTot = cssClassFn({ isTot: true }, totVal);
+        if (clsTot) tdTot.classList.add(clsTot);
+      }
+      tr.appendChild(tdTot);
+      tbody.appendChild(tr);
+      return tr;
+    }
+
+    function addGroupHeaderDia(title) {
+      var tr = document.createElement('tr');
+      tr.className = 'row-header-group';
+      var th = document.createElement('th');
+      th.colSpan = diasVisiveis.length + 2;
+      th.textContent = title;
+      tr.appendChild(th);
+      tbody.appendChild(tr);
+    }
+
+    addRowDia('👥 Efetivo Previsto', function (item) {
+      return (mapPorDia[item.iso] && mapPorDia[item.iso].previstos) || mesFoco.efetivoMedio || 0;
+    }, mesFoco.efetivoMedio || 0);
+
+    addRowDia('🚪 Total de Desligamentos (Efetivo Real)', function (item) {
+      return (desligsPorDiaMap[item.iso] && desligsPorDiaMap[item.iso].total) || 0;
+    }, mesFoco.totalDesligamentos || 0, function (item, v) { return v > 0 ? 'cell--vermelho' : 'cell--neutro'; }, function (item) {
+      abrirDrilldownTurnover('dia', item.iso, 'Desligamentos em ' + item.iso.split('-').reverse().join('/'));
+    });
+
+    addRowDia('⚙️ Turnover Operacional (Gerenciável)', function (item) {
+      return (desligsPorDiaMap[item.iso] && desligsPorDiaMap[item.iso].operacional) || 0;
+    }, mesFoco.turnoverOperacional || 0, function (item, v) { return v > 0 ? 'cell--vermelho' : 'cell--neutro'; }, function (item) {
+      abrirDrilldownTurnover('tipo', { dia: item.iso, tipo: 'Operacional' }, 'Turnover Operacional em ' + item.iso.split('-').reverse().join('/'));
+    });
+
+    addRowDia('📉 Redução de Quadro (Efetivo Contratual)', function (item) {
+      return (desligsPorDiaMap[item.iso] && desligsPorDiaMap[item.iso].reducao) || 0;
+    }, mesFoco.reducaoQuadro || 0, null, function (item) {
+      abrirDrilldownTurnover('tipo', { dia: item.iso, tipo: 'Redução de Quadro' }, 'Redução de Quadro em ' + item.iso.split('-').reverse().join('/'));
+    });
+
+    addGroupHeaderDia('JUSTIFICATIVAS ESPECÍFICAS DE DEMISSÃO');
+    addRowDia('🔻 Redução de Quadro (Efetivo)', function (item) {
+      return (desligsPorDiaMap[item.iso] && desligsPorDiaMap[item.iso].justificativas.reducao_quadro) || 0;
+    }, mesFoco.justificativas?.reducao_quadro || 0, null, function (item) {
+      abrirDrilldownTurnover('motivo', { dia: item.iso, codigo: 'reducao_quadro' }, 'Redução de Quadro em ' + item.iso.split('-').reverse().join('/'));
+    });
+
+    addRowDia('⚠️ Alto Índice de Absenteísmo', function (item) {
+      return (desligsPorDiaMap[item.iso] && desligsPorDiaMap[item.iso].justificativas.absenteismo) || 0;
+    }, mesFoco.justificativas?.absenteismo || 0, function (item, v) { return v > 0 ? 'cell--vermelho' : 'cell--neutro'; }, function (item) {
+      abrirDrilldownTurnover('motivo', { dia: item.iso, codigo: 'absenteismo' }, 'Desligamentos por Absenteísmo em ' + item.iso.split('-').reverse().join('/'));
+    });
+
+    addRowDia('⏱️ Baixa Produtividade', function (item) {
+      return (desligsPorDiaMap[item.iso] && desligsPorDiaMap[item.iso].justificativas.baixa_produtividade) || 0;
+    }, mesFoco.justificativas?.baixa_produtividade || 0, null, function (item) {
+      abrirDrilldownTurnover('motivo', { dia: item.iso, codigo: 'baixa_produtividade' }, 'Baixa Produtividade em ' + item.iso.split('-').reverse().join('/'));
+    });
+
+    addRowDia('📝 Pedido de Demissão', function (item) {
+      return (desligsPorDiaMap[item.iso] && desligsPorDiaMap[item.iso].justificativas.pedido_demissao) || 0;
+    }, mesFoco.justificativas?.pedido_demissao || 0, null, function (item) {
+      abrirDrilldownTurnover('motivo', { dia: item.iso, codigo: 'pedido_demissao' }, 'Pedido de Demissão em ' + item.iso.split('-').reverse().join('/'));
+    });
+
+    addRowDia('🚫 Desvio Comportamental', function (item) {
+      return (desligsPorDiaMap[item.iso] && desligsPorDiaMap[item.iso].justificativas.desvio_comportamental) || 0;
+    }, mesFoco.justificativas?.desvio_comportamental || 0, null, function (item) {
+      abrirDrilldownTurnover('motivo', { dia: item.iso, codigo: 'desvio_comportamental' }, 'Desvio Comportamental em ' + item.iso.split('-').reverse().join('/'));
+    });
+
+    addGroupHeaderDia('TAXAS DE TURNOVER E METAS');
+    addRowDia('📊 Taxa de Turnover Operacional (%)', function (item) {
+      var prev = (mapPorDia[item.iso] && mapPorDia[item.iso].previstos) || mesFoco.efetivoMedio || 0;
+      var op = (desligsPorDiaMap[item.iso] && desligsPorDiaMap[item.iso].operacional) || 0;
+      if (prev <= 0 || op <= 0) return '0,00%';
+      return pctBr((op / prev) * 100);
+    }, pctBr(mesFoco.turnoverOperacionalPct), function (item, val) {
+      var num = parseFloat(String(val).replace(',', '.'));
+      if (num <= 0) return 'cell--neutro';
+      if (num <= 3.0) return 'cell--verde';
+      if (num <= 5.0) return 'cell--amarelo';
+      return 'cell--vermelho';
+    });
+
+    addRowDia('📈 Taxa de Turnover Geral (%)', function (item) {
+      var prev = (mapPorDia[item.iso] && mapPorDia[item.iso].previstos) || mesFoco.efetivoMedio || 0;
+      var tot = (desligsPorDiaMap[item.iso] && desligsPorDiaMap[item.iso].total) || 0;
+      if (prev <= 0 || tot <= 0) return '0,00%';
+      return pctBr((tot / prev) * 100);
+    }, pctBr(mesFoco.turnoverGeralPct), function (item, val) {
+      var num = parseFloat(String(val).replace(',', '.'));
+      if (num <= 0) return 'cell--neutro';
+      if (num <= 5.0) return 'cell--verde';
+      return 'cell--vermelho';
+    });
+
+    var trAcum = document.createElement('tr');
+    trAcum.className = 'row-acumulado';
+    var thAc = document.createElement('th');
+    thAc.textContent = '🏁 Turnover Acumulado no Mês (%)';
+    trAcum.appendChild(thAc);
+
+    var somaParcialDia = 0;
+    diasVisiveis.forEach(function (item) {
+      somaParcialDia += ((desligsPorDiaMap[item.iso] && desligsPorDiaMap[item.iso].operacional) || 0);
+      var td = document.createElement('td');
+      var pctAcumDia = mesFoco.efetivoMedio > 0 ? ((somaParcialDia / mesFoco.efetivoMedio) * 100) : 0;
+      td.textContent = pctBr(pctAcumDia);
+      trAcum.appendChild(td);
+    });
+
+    var tdTotAc = document.createElement('td');
+    tdTotAc.textContent = pctBr(mesFoco.turnoverOperacionalPct);
+    trAcum.appendChild(tdTotAc);
+    tbody.appendChild(trAcum);
+  }
+
+  function abrirDrilldownTurnover(tipoFiltro, valorFiltro, titulo) {
+    var box = document.getElementById('turnover-drilldown');
+    var titEl = document.getElementById('turnover-drilldown-title');
+    var tbody = document.querySelector('#table-turnover-drilldown tbody');
+    if (!box || !tbody) return;
+
+    var todos = (turnoverMatrizState.data && turnoverMatrizState.data.detalhes) || [];
+    var filtrados = [];
+
+    if (tipoFiltro === 'mes') {
+      filtrados = todos.filter(function (d) { return d.data && d.data.startsWith(valorFiltro); });
+    } else if (tipoFiltro === 'dia') {
+      filtrados = todos.filter(function (d) { return d.data === valorFiltro; });
+    } else if (tipoFiltro === 'tipo') {
+      filtrados = todos.filter(function (d) {
+        var matchTempo = valorFiltro.mes ? d.data.startsWith(valorFiltro.mes) : (valorFiltro.dia ? d.data === valorFiltro.dia : true);
+        return matchTempo && d.tipo === valorFiltro.tipo;
+      });
+    } else if (tipoFiltro === 'motivo') {
+      filtrados = todos.filter(function (d) {
+        var matchTempo = valorFiltro.mes ? d.data.startsWith(valorFiltro.mes) : (valorFiltro.dia ? d.data === valorFiltro.dia : true);
+        return matchTempo && d.motivoCodigo === valorFiltro.codigo;
+      });
+    } else {
+      filtrados = todos;
+    }
+
+    if (titEl) {
+      titEl.innerHTML = '<i class="bi bi-person-x"></i> ' + (titulo || 'Detalhamento de Desligamentos') + ' <small style="color:#94a3b8; font-weight:normal;">(' + filtrados.length + ' colaboradores)</small>';
+    }
+
+    if (!filtrados.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-muted text-center p-3">Nenhum registro encontrado para este filtro.</td></tr>';
+    } else {
+      tbody.innerHTML = filtrados.map(function (d) {
+        var badgeCls = d.tipo === 'Operacional' ? 'badge-danger' : 'badge-secondary';
+        var dataFmt = d.data ? d.data.split('-').reverse().join('/') : '—';
+        return '<tr>' +
+          '<td><code>' + escapeHtml(d.matricula || '—') + '</code></td>' +
+          '<td><strong>' + escapeHtml(d.nome || '—') + '</strong></td>' +
+          '<td>' + escapeHtml(d.cargo || '—') + '</td>' +
+          '<td>' + dataFmt + '</td>' +
+          '<td>' + escapeHtml(d.motivoLabel || d.motivoCodigo || '—') + '</td>' +
+          '<td><span class="badge ' + badgeCls + '">' + escapeHtml(d.tipo) + '</span></td>' +
+          '</tr>';
+      }).join('');
+    }
+
+    box.style.display = 'block';
+    box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  function setupTurnoverMatrizExport() {
+    var btnExcel = document.getElementById('btn-export-turnover-excel');
+    var btnPdf = document.getElementById('btn-export-turnover-pdf');
+
+    if (btnExcel) {
+      btnExcel.addEventListener('click', function () {
+        exportTurnoverMatrizExcel();
+      });
+    }
+
+    if (btnPdf) {
+      btnPdf.addEventListener('click', function () {
+        exportTurnoverMatrizPDF();
+      });
+    }
+  }
+
+  function exportTurnoverMatrizExcel() {
+    var tbl = document.getElementById('table-matriz-turnover');
+    if (!tbl) return;
+
+    var modo = turnoverMatrizState.viewMode === 'meses' ? 'Mensal' : 'Diario';
+    var nomeArquivo = 'Matriz_Turnover_' + modo + '_' + (new Date().toISOString().slice(0, 10)) + '.xlsx';
+
+    if (typeof XLSX !== 'undefined') {
+      try {
+        var wb = XLSX.utils.table_to_book(tbl, { sheet: "Matriz Turnover" });
+        XLSX.writeFile(wb, nomeArquivo);
+        return;
+      } catch (e) {
+        console.warn('Erro ao exportar com SheetJS, usando fallback CSV:', e);
+      }
+    }
+
+    var rows = [];
+    var trs = tbl.querySelectorAll('tr');
+    trs.forEach(function (tr) {
+      var line = [];
+      var cells = tr.querySelectorAll('th, td');
+      cells.forEach(function (c) {
+        var txt = c.innerText.replace(/(\r\n|\n|\r)/gm, ' ').replace(/"/g, '""').trim();
+        line.push('"' + txt + '"');
+      });
+      if (line.length) rows.push(line.join(';'));
+    });
+    var bom = '\uFEFF';
+    var blob = new Blob([bom + rows.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = nomeArquivo.replace('.xlsx', '.csv');
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function exportTurnoverMatrizPDF() {
+    var tbl = document.getElementById('table-matriz-turnover');
+    if (!tbl) return;
+
+    var dataRel = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    var subTitulo = turnoverMatrizState.viewMode === 'meses'
+      ? 'Visão Consolidada Mensal'
+      : ('Visão Diária — ' + (turnoverMatrizState.nomeMesFoco || 'Mês Selecionado'));
+
+    var html = '<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Matriz de Turnover</title>' +
+      '<style>' +
+      'body { font-family: Inter, Arial, sans-serif; font-size: 8.5px; margin: 16px; background: #0f172a; color: #f8fafc; }' +
+      '.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; border-bottom: 2px solid #334155; padding-bottom: 6px; }' +
+      '.header h1 { font-size: 13px; font-weight: 900; margin: 0; color: #f87171; letter-spacing: 0.04em; }' +
+      '.header h2 { font-size: 11px; font-weight: 700; margin: 0; color: #f1f5f9; }' +
+      '.header small { color: #94a3b8; }' +
+      'table { width: 100%; border-collapse: collapse; background: #0f172a; }' +
+      'th, td { border: 1px solid #334155; padding: 4px 5px; text-align: center; white-space: nowrap; }' +
+      'thead th { background: #0f172a !important; color: #f8fafc !important; font-weight: 800; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
+      'tbody tr th { background: #1e293b !important; color: #f1f5f9 !important; text-align: left; font-weight: 700; min-width: 170px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
+      'tbody td { background: #0f172a !important; color: #e2e8f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
+      '.row-header-group th, .row-header-group td { background: #1e293b !important; color: #94a3b8 !important; font-weight: 800; font-size: 7px; text-transform: uppercase; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
+      '.cell--verde { background: #064e3b !important; color: #6ee7b7 !important; font-weight: 700; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
+      '.cell--amarelo { background: #78350f !important; color: #fde68a !important; font-weight: 700; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
+      '.cell--vermelho { background: #7f1d1d !important; color: #fca5a5 !important; font-weight: 700; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
+      '.cell--neutro { background: #0f172a !important; color: #64748b !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
+      '.row-acumulado th, .row-acumulado td { border-top: 3px double #475569; background: #0f172a !important; color: #38bdf8 !important; font-weight: 900; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
+      '@page { size: A4 landscape; margin: 0.8cm; }' +
+      '</style></head><body>' +
+      '<div class="header">' +
+      '<div><h1>OMEGA SERVICE · RH</h1><small>Relatório de Turnover gerado em ' + dataRel + '</small></div>' +
+      '<h2>MATRIZ DETALHADA DE TURNOVER E DESLIGAMENTOS<br><small>' + subTitulo + '</small></h2>' +
+      '</div>' +
+      tbl.outerHTML +
+      '</body></html>';
+
+    var win = window.open('', '_blank', 'width=1100,height=700');
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(function () { win.print(); }, 600);
+  }
+
   function setupExportPdf() {
     var btn = document.getElementById('btn-export-pdf');
     if (!btn) return;
 
-    // html2pdf é carregado sob demanda (lazy) para não bloquear o FCP.
-    // O script de ~570 KB é injetado somente quando o usuário clica em PDF.
-    // Nos cliques seguintes, html2pdf já está disponível e o export é imediato.
     var HTML2PDF_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
 
     function doExport() {
@@ -3323,7 +4006,6 @@
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' }
       };
 
-      // Expande a rolagem do calendário durante o snapshot do PDF
       var calGrid = document.getElementById('calendario');
       if (calGrid) calGrid.classList.add('cal-export');
       var restoreCal = function () {
@@ -3343,29 +4025,25 @@
     }
 
     btn.addEventListener('click', function () {
-      // Já carregado (2º clique em diante): exporta imediatamente
       if (typeof html2pdf !== 'undefined') {
         doExport();
         return;
       }
-      // 1º clique: injeta o script e exporta após o carregamento
       var s = document.createElement('script');
       s.src = HTML2PDF_CDN;
       s.onload = doExport;
       s.onerror = function () {
-        // Fallback: impressão nativa do browser se a CDN falhar
-        console.warn('html2pdf CDN indispon\u00edvel, usando window.print().');
+        console.warn('html2pdf CDN indisponível, usando window.print().');
         window.print();
       };
       document.head.appendChild(s);
     });
   }
 
-  // Modal Ômega (setOmegaProgress/showOmegaSuccess/closeOmegaLoader) vive em
-  // js/omega-loader.js — compartilhado com tratamento.html.
-
   // Inicializa o toggle de visão Calendário ↔ Matriz e os botões de exportação
   setupCalViewToggle();
   setupMatrizExport();
+  setupTurnoverMatrizControls();
+  setupTurnoverMatrizExport();
 
 })();

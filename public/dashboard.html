@@ -19,6 +19,7 @@
   <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/nouislider/dist/nouislider.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <!-- html2pdf carregado sob demanda (lazy) ao clicar em Exportar PDF -->
 </head>
 <body class="rhub-app">
@@ -380,6 +381,75 @@
             <div class="rhub-panel-body chart-container" id="chart-composicao-desligamentos"></div>
           </div>
 
+        </div>
+
+        <!-- ============================================================
+             MATRIZ DETALHADA DE TURNOVER E DESLIGAMENTOS
+             ============================================================ -->
+        <div class="rhub-card card-turnover-matriz" id="card-turnover-matriz" style="margin-top: 1.5rem; width: 100%;">
+          <div class="rhub-card__header" style="flex-wrap: wrap; gap: 10px;">
+            <span class="rhub-card__title">
+              <i class="bi bi-table"></i>
+              MATRIZ DETALHADA DE TURNOVER E DESLIGAMENTOS
+            </span>
+            <div class="rhub-turnover-matriz-controls no-print" style="display:flex; align-items:center; gap: 8px; flex-wrap: wrap;">
+              <div class="btn-group btn-group-sm" role="group">
+                <button type="button" class="btn btn-outline active" id="btn-turnover-view-meses">🗓️ Visão Mensal</button>
+                <button type="button" class="btn btn-outline" id="btn-turnover-view-dias">📅 Visão Diária</button>
+              </div>
+              <div id="turnover-matriz-actions" style="display:flex; gap: 4px;">
+                <button type="button" class="btn btn-sm btn-outline-success" id="btn-export-turnover-excel" title="Exportar Excel">
+                  <i class="bi bi-file-earmark-excel"></i> Excel
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-danger" id="btn-export-turnover-pdf" title="Exportar PDF">
+                  <i class="bi bi-file-earmark-pdf"></i> PDF
+                </button>
+              </div>
+              <div style="display:flex; align-items:center;">
+                <button type="button" class="rhub-cal-nav" id="turnover-matriz-prev" title="Mês/Período anterior">&lsaquo;</button>
+                <button type="button" class="rhub-cal-nav" id="turnover-matriz-next" title="Próximo mês/período">&rsaquo;</button>
+                <button type="button" class="btn btn-sm btn-outline" id="turnover-matriz-atual" title="Voltar ao período/mês atual">Período Atual</button>
+              </div>
+            </div>
+          </div>
+          <div class="rhub-turnover-matriz-body" style="position: relative; display: flex; flex-direction: column; width: 100%;">
+            <div class="turnover-matriz-legend" style="display: flex; gap: 14px; align-items: center; font-size: 0.75rem; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border, #334155); background: #0f172a; color: #94a3b8; flex-wrap: wrap;">
+              <span><span class="dot dot--verde" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#10b981; margin-right:4px;"></span> Turnover Operacional ≤ 3,00% (Meta Atingida)</span>
+              <span><span class="dot dot--vermelho" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#ef4444; margin-right:4px;"></span> Turnover Operacional &gt; 3,00% (Limite Superado)</span>
+              <span><strong style="color:#cbd5e1;">Meta Geral:</strong> ≤ 5,00%</span>
+              <span class="text-muted"><i class="bi bi-hand-index-thumb"></i> Clique em qualquer coluna ou linha para detalhar os registros</span>
+            </div>
+            <div id="turnover-matriz-container" style="width: 100%; overflow-x: auto; padding: 0.5rem;">
+              <table class="table-matriz table-matriz-turnover" id="table-matriz-turnover">
+                <thead></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <!-- DRILLDOWN DE DESLIGAMENTOS -->
+            <div id="turnover-drilldown" style="display: none; margin: 0.75rem; padding: 0.75rem; background: #0f172a; border: 1px solid #334155; border-radius: 6px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                <h4 id="turnover-drilldown-title" style="font-size: 0.85rem; font-weight: 700; margin: 0; color: #f8fafc;">
+                  <i class="bi bi-person-x"></i> Detalhamento de Desligamentos
+                </h4>
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-close-turnover-drilldown" style="font-size: 0.7rem; padding: 2px 6px;">✕ Fechar</button>
+              </div>
+              <div class="table-responsive" style="max-height: 250px; overflow-y: auto;">
+                <table class="table table-sm table-striped" id="table-turnover-drilldown" style="font-size: 0.75rem; width: 100%;">
+                  <thead>
+                    <tr>
+                      <th>Matrícula</th>
+                      <th>Colaborador</th>
+                      <th>Função / Cargo</th>
+                      <th>Data</th>
+                      <th>Justificativa / Motivo</th>
+                      <th>Classificação</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 

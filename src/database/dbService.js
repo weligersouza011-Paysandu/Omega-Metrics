@@ -723,6 +723,74 @@ async function getDesligamentosHistorico(dataInicio, dataFim) {
   return result.rows;
 }
 
+/**
+ * getMatrizTurnoverAggregates — Agrega desligamentos_historico por mês e por dia,
+ * categorizando por justificativa e indicador de turnover (conta_turnover).
+ * @param {string} [dataInicio] - 'YYYY-MM-DD'
+ * @param {string} [dataFim]    - 'YYYY-MM-DD'
+ */
+async function getMatrizTurnoverAggregates(dataInicio, dataFim) {
+  const params = [];
+  let whereClause = '';
+  if (dataInicio && dataFim) {
+    params.push(dataInicio, dataFim);
+    whereClause = 'WHERE data_desligamento BETWEEN $1 AND $2';
+  }
+
+  const queryMes = `
+    SELECT 
+      TO_CHAR(data_desligamento::date, 'YYYY-MM') AS chave_mes,
+      EXTRACT(YEAR FROM data_desligamento::date)::int AS ano,
+      EXTRACT(MONTH FROM data_desligamento::date)::int AS mes,
+      justificativa_rh,
+      conta_turnover,
+      COUNT(*)::int AS total
+    FROM desligamentos_historico
+    ${whereClause}
+    GROUP BY 1, 2, 3, 4, 5
+    ORDER BY 1, 4
+  `;
+
+  const queryDia = `
+    SELECT 
+      data_desligamento,
+      justificativa_rh,
+      conta_turnover,
+      COUNT(*)::int AS total
+    FROM desligamentos_historico
+    ${whereClause}
+    GROUP BY 1, 2, 3
+    ORDER BY 1, 2
+  `;
+
+  const queryDetalhes = `
+    SELECT 
+      id,
+      data_desligamento,
+      chave_funcionario,
+      nome_funcionario,
+      cargo,
+      departamento,
+      justificativa_rh,
+      conta_turnover
+    FROM desligamentos_historico
+    ${whereClause}
+    ORDER BY data_desligamento DESC, nome_funcionario
+  `;
+
+  const [resMes, resDia, resDetalhes] = await Promise.all([
+    pool.query(queryMes, params),
+    pool.query(queryDia, params),
+    pool.query(queryDetalhes, params)
+  ]);
+
+  return {
+    porMes: resMes.rows,
+    porDia: resDia.rows,
+    detalhes: resDetalhes.rows
+  };
+}
+
 async function getCalendarioDatas() {
   const result = await pool.query(`
     SELECT data, registros_ponto, desligamentos
@@ -1294,6 +1362,7 @@ module.exports = {
   getPontoParaTurnover,
   getKpisAgregados,
   getDesligamentosHistorico,
+  getMatrizTurnoverAggregates,
   getCalendarioDatas,
   getCalendarioOperacional,
   getCalendarioPeriodoMapa,

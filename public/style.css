@@ -1931,6 +1931,92 @@ body.pdf-export .eng-topnav,
   font-size: 0.7rem;
 }
 
+/* ===== TABELA MATRIZ DETALHADA DE TURNOVER (TEMA ESCURO) ===== */
+.card-turnover-matriz {
+  background: #1e293b;
+  border-radius: var(--radius-lg, 12px);
+  border: 1px solid #334155;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+}
+
+.table-matriz-turnover {
+  background: #0f172a;
+}
+
+.table-matriz-turnover thead th {
+  background: #0f172a !important;
+  color: #f8fafc !important;
+  border-color: #334155;
+}
+
+.table-matriz-turnover thead tr:nth-child(2) th {
+  background: #1e293b !important;
+  color: #94a3b8 !important;
+}
+
+.table-matriz-turnover tbody tr th {
+  background: #1e293b !important;
+  color: #f1f5f9 !important;
+  border-color: #334155;
+  border-right: 2px solid #475569;
+}
+
+.table-matriz-turnover td {
+  border-color: #334155;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+.table-matriz-turnover tbody tr:hover td {
+  background: #1e293b;
+}
+
+.table-matriz-turnover tbody tr:hover th {
+  background: #334155 !important;
+}
+
+.table-matriz-turnover .row-header-group th,
+.table-matriz-turnover .row-header-group td {
+  background: #1e293b !important;
+  color: #94a3b8 !important;
+  font-weight: 800;
+  text-transform: uppercase;
+  font-size: 0.65rem;
+  letter-spacing: 0.05em;
+  border-top: 2px solid #475569;
+}
+
+.table-matriz-turnover td.cell--verde {
+  background: #064e3b !important;
+  color: #6ee7b7 !important;
+  font-weight: 700;
+}
+
+.table-matriz-turnover td.cell--amarelo {
+  background: #78350f !important;
+  color: #fde68a !important;
+  font-weight: 700;
+}
+
+.table-matriz-turnover td.cell--vermelho {
+  background: #7f1d1d !important;
+  color: #fca5a5 !important;
+  font-weight: 700;
+}
+
+.table-matriz-turnover td.cell--neutro {
+  background: #0f172a !important;
+  color: #64748b !important;
+}
+
+.table-matriz-turnover tr.row-acumulado th,
+.table-matriz-turnover tr.row-acumulado td {
+  border-top: 3px double #475569;
+  background: #0f172a !important;
+  color: #38bdf8 !important;
+  font-weight: 900;
+}
+
 
 
 .absenteeism-bottom-row {

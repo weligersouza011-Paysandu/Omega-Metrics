@@ -17,7 +17,7 @@ const { initDatabase, createPgPool, checkDatabaseHealth, FALLBACK_NEON_DATABASE_
   createLote, getLote, confirmLote,
   upsertPontoHistorico, insertDesligamentosJustificados, updateCalendario,
   getPontoHistorico, getPontoParaTurnover, getKpisAgregados,
-  getDesligamentosHistorico, getCalendarioDatas,
+  getDesligamentosHistorico, getMatrizTurnoverAggregates, getCalendarioDatas,
   getCalendarioOperacional, getCalendarioDiasFatos, getCalendarioAno,
   upsertDiaOperacional, gerarCalendarioAno,
   getPeriodoLimites, getEfetivoTotal,
@@ -164,6 +164,189 @@ function montarDiaCalendario(r) {
     maternidade: parseInt(r.maternidade, 10) || 0,
     presentes: previstos - faltas,
     status_cor: statusCor
+  };
+}
+
+const JUSTIFICATIVAS_TURNOVER_CONFIG = [
+  { codigo: 'reducao_quadro', label: 'Redução de Quadro (Efetivo)', contaTurnover: 0, icone: '📉' },
+  { codigo: 'absenteismo', label: 'Alto Índice de Absenteísmo', contaTurnover: 1, icone: '⚠️' },
+  { codigo: 'baixa_produtividade', label: 'Baixa Produtividade', contaTurnover: 1, icone: '⏱️' },
+  { codigo: 'pedido_demissao', label: 'Pedido de Demissão', contaTurnover: 1, icone: '📝' },
+  { codigo: 'desvio_comportamental', label: 'Desvio Comportamental', contaTurnover: 1, icone: '🚫' }
+];
+
+function montarMatrizTurnover(aggregates, efetivoAtivoPorMes, efetivoAtivoMedioGeral) {
+  const { porMes, porDia, detalhes } = aggregates || { porMes: [], porDia: [], detalhes: [] };
+
+  const efetivoMap = {};
+  if (Array.isArray(efetivoAtivoPorMes)) {
+    efetivoAtivoPorMes.forEach(m => {
+      efetivoMap[m.chave] = {
+        label: m.label,
+        efetivoAtivo: m.efetivoAtivo || 0
+      };
+    });
+  }
+
+  const mesesMap = {};
+  for (const r of (porMes || [])) {
+    const chave = r.chave_mes;
+    if (!mesesMap[chave]) {
+      const [ano, mesNum] = chave.split('-');
+      const mesIdx = parseInt(mesNum, 10) - 1;
+      const label = `${MESES_PT_SRV[mesIdx] || mesNum}/${ano.slice(2)}`;
+      mesesMap[chave] = {
+        chave,
+        ano: parseInt(ano, 10),
+        mes: parseInt(mesNum, 10),
+        label: efetivoMap[chave]?.label || label,
+        efetivoMedio: efetivoMap[chave]?.efetivoAtivo || 0,
+        totalDesligamentos: 0,
+        turnoverOperacional: 0,
+        reducaoQuadro: 0,
+        justificativas: {
+          reducao_quadro: 0,
+          absenteismo: 0,
+          baixa_produtividade: 0,
+          pedido_demissao: 0,
+          desvio_comportamental: 0
+        }
+      };
+    }
+
+    const cod = r.justificativa_rh;
+    const qtd = parseInt(r.total, 10) || 0;
+    const cTurn = Number(r.conta_turnover);
+
+    if (mesesMap[chave].justificativas[cod] !== undefined) {
+      mesesMap[chave].justificativas[cod] += qtd;
+    } else {
+      mesesMap[chave].justificativas[cod] = qtd;
+    }
+
+    mesesMap[chave].totalDesligamentos += qtd;
+    if (cTurn === 1) {
+      mesesMap[chave].turnoverOperacional += qtd;
+    } else {
+      mesesMap[chave].reducaoQuadro += qtd;
+    }
+  }
+
+  if (Array.isArray(efetivoAtivoPorMes)) {
+    efetivoAtivoPorMes.forEach(m => {
+      if (!mesesMap[m.chave]) {
+        const [ano, mesNum] = m.chave.split('-');
+        mesesMap[m.chave] = {
+          chave: m.chave,
+          ano: parseInt(ano, 10),
+          mes: parseInt(mesNum, 10),
+          label: m.label,
+          efetivoMedio: m.efetivoAtivo || 0,
+          totalDesligamentos: 0,
+          turnoverOperacional: 0,
+          reducaoQuadro: 0,
+          justificativas: {
+            reducao_quadro: 0,
+            absenteismo: 0,
+            baixa_produtividade: 0,
+            pedido_demissao: 0,
+            desvio_comportamental: 0
+          }
+        };
+      } else if (!mesesMap[m.chave].efetivoMedio && m.efetivoAtivo) {
+        mesesMap[m.chave].efetivoMedio = m.efetivoAtivo;
+      }
+    });
+  }
+
+  const mesesLista = Object.values(mesesMap).sort((a, b) => a.chave.localeCompare(b.chave));
+
+  mesesLista.forEach(m => {
+    m.turnoverOperacionalPct = m.efetivoMedio > 0
+      ? parseFloat(((m.turnoverOperacional / m.efetivoMedio) * 100).toFixed(2))
+      : 0;
+    m.turnoverGeralPct = m.efetivoMedio > 0
+      ? parseFloat(((m.totalDesligamentos / m.efetivoMedio) * 100).toFixed(2))
+      : 0;
+    m.metaOperacional = META_TURNOVER_OPERACIONAL;
+    m.metaGeral = META_TURNOVER_GERAL;
+    m.metaAtingida = m.turnoverOperacionalPct <= META_TURNOVER_OPERACIONAL;
+  });
+
+  const diasPorMes = {};
+  for (const d of (porDia || [])) {
+    const chaveMes = d.data_desligamento.slice(0, 7);
+    if (!diasPorMes[chaveMes]) diasPorMes[chaveMes] = [];
+    diasPorMes[chaveMes].push({
+      data: d.data_desligamento,
+      justificativa: d.justificativa_rh,
+      contaTurnover: Number(d.conta_turnover),
+      total: parseInt(d.total, 10) || 0
+    });
+  }
+
+  let totalDesligAcum = 0;
+  let totalOperacionalAcum = 0;
+  let totalReducaoAcum = 0;
+  const justificativasTotais = {
+    reducao_quadro: 0,
+    absenteismo: 0,
+    baixa_produtividade: 0,
+    pedido_demissao: 0,
+    desvio_comportamental: 0
+  };
+
+  mesesLista.forEach(m => {
+    totalDesligAcum += m.totalDesligamentos;
+    totalOperacionalAcum += m.turnoverOperacional;
+    totalReducaoAcum += m.reducaoQuadro;
+    Object.keys(justificativasTotais).forEach(k => {
+      justificativasTotais[k] += (m.justificativas[k] || 0);
+    });
+  });
+
+  const efetivoMedioPeriodo = efetivoAtivoMedioGeral || (mesesLista.length > 0
+    ? Math.round(mesesLista.reduce((acc, m) => acc + (m.efetivoMedio || 0), 0) / mesesLista.length)
+    : 0);
+
+  const taxaOperacionalAcumulada = efetivoMedioPeriodo > 0
+    ? parseFloat(((totalOperacionalAcum / efetivoMedioPeriodo) * 100).toFixed(2))
+    : 0;
+  const taxaGeralAcumulada = efetivoMedioPeriodo > 0
+    ? parseFloat(((totalDesligAcum / efetivoMedioPeriodo) * 100).toFixed(2))
+    : 0;
+
+  const acumulado = {
+    efetivoMedio: efetivoMedioPeriodo,
+    totalDesligamentos: totalDesligAcum,
+    turnoverOperacional: totalOperacionalAcum,
+    reducaoQuadro: totalReducaoAcum,
+    justificativas: justificativasTotais,
+    turnoverOperacionalPct: taxaOperacionalAcumulada,
+    turnoverGeralPct: taxaGeralAcumulada,
+    metaOperacional: META_TURNOVER_OPERACIONAL,
+    metaGeral: META_TURNOVER_GERAL,
+    metaAtingida: taxaOperacionalAcumulada <= META_TURNOVER_OPERACIONAL
+  };
+
+  const listaDetalhes = (detalhes || []).map(d => ({
+    id: d.id,
+    data: d.data_desligamento,
+    matricula: String(d.chave_funcionario || '').replace('MAT_', ''),
+    nome: d.nome_funcionario,
+    cargo: d.cargo || '—',
+    departamento: d.departamento || '—',
+    motivoCodigo: d.justificativa_rh,
+    motivoLabel: JUSTIFICATIVAS_TURNOVER_CONFIG.find(c => c.codigo === d.justificativa_rh)?.label || d.justificativa_rh,
+    tipo: Number(d.conta_turnover) === 1 ? 'Operacional' : 'Redução de Quadro'
+  }));
+
+  return {
+    configJustificativas: JUSTIFICATIVAS_TURNOVER_CONFIG,
+    meses: mesesLista,
+    diasPorMes,
+    acumulado,
+    detalhes: listaDetalhes
   };
 }
 
@@ -552,7 +735,8 @@ app.get('/api/dashboard/kpis', async (req, res) => {
       agGlobal,
       agStatusOpt,
       agMesOpt,
-      todosDesligRows
+      todosDesligRows,
+      matrizTurnoverAggregates
     ] = await Promise.all([
       getPontoParaTurnover(dataInicio, dataFim),
       getDesligamentosHistorico(dataInicio, dataFim),
@@ -560,7 +744,8 @@ app.get('/api/dashboard/kpis', async (req, res) => {
       getKpisAgregados(dataInicio, dataFim, cross, null),
       needsStatusQuery ? getKpisAgregados(dataInicio, dataFim, cross, 'status') : Promise.resolve(null),
       needsMesQuery    ? getKpisAgregados(dataInicio, dataFim, cross, 'mes')    : Promise.resolve(null),
-      getDesligamentosHistorico()
+      getDesligamentosHistorico(),
+      getMatrizTurnoverAggregates(dataInicio, dataFim)
     ]);
 
     const agStatus = agStatusOpt || agGlobal;
@@ -745,6 +930,7 @@ app.get('/api/dashboard/kpis', async (req, res) => {
     graficos.turnoverHeadcount = turnoverHeadcount;
     graficos.justificativas = justificativas;
     graficos.turnoverPorFuncao = turnoverPorFuncao;
+    graficos.matrizTurnover = montarMatrizTurnover(matrizTurnoverAggregates, efetivoAtivo.porMes, efetivoAtivo.efetivoAtivoMedio);
     graficos.desligamentosDetalhe = desligData
       .map(d => ({
         nome: d.nome,
@@ -779,6 +965,40 @@ app.get('/api/dashboard/kpis', async (req, res) => {
     return res.json(responsePayload);
   } catch (err) {
     console.error('Erro ao buscar KPIs:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/dashboard/matriz-turnover
+ * Retorna dados estruturados e agregados da tabela desligamentos_historico
+ * agrupados por mês e por dia para alimentar a Matriz Detalhada de Turnover.
+ */
+app.get('/api/dashboard/matriz-turnover', async (req, res) => {
+  try {
+    let { dataInicio, dataFim } = req.query;
+    if (!dataInicio || !dataFim) {
+      const limites = await getPeriodoLimites();
+      dataInicio = limites.min || limites.dataMinima;
+      dataFim = limites.max || limites.dataMaxima;
+    }
+
+    const [pontoRows, aggregates] = await Promise.all([
+      getPontoParaTurnover(dataInicio, dataFim),
+      getMatrizTurnoverAggregates(dataInicio, dataFim)
+    ]);
+
+    const baseRows = toPontoDataShape(pontoRows);
+    const efetivoAtivo = calcEfetivoAtivoPorMes(baseRows);
+    const matriz = montarMatrizTurnover(aggregates, efetivoAtivo.porMes, efetivoAtivo.efetivoAtivoMedio);
+
+    return res.json({
+      success: true,
+      periodo: { dataInicio, dataFim },
+      ...matriz
+    });
+  } catch (err) {
+    console.error('Erro ao carregar Matriz de Turnover:', err);
     return res.status(500).json({ success: false, error: err.message });
   }
 });
