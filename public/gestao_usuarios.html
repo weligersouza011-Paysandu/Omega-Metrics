@@ -9,6 +9,100 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
   <link href="style.css" rel="stylesheet">
+  <!-- Autenticação & Sessão -->
+  <script src="js/auth.js"></script>
+  <style>
+    .modal-backdrop-custom {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(4px);
+      z-index: 1050;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+    .modal-backdrop-custom.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .modal-dialog-custom {
+      background: #1e293b;
+      color: #f8fafc;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      width: 100%;
+      max-width: 520px;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+      overflow: hidden;
+      transform: translateY(20px);
+      transition: transform 0.2s ease;
+    }
+    .modal-backdrop-custom.active .modal-dialog-custom {
+      transform: translateY(0);
+    }
+    .form-group-custom {
+      margin-bottom: 16px;
+    }
+    .form-label-custom {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #94a3b8;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .form-control-custom {
+      width: 100%;
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      color: #f8fafc;
+      padding: 10px 14px;
+      font-size: 0.9rem;
+      outline: none;
+      box-sizing: border-box;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .form-control-custom:focus {
+      border-color: #38bdf8;
+      box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.2);
+    }
+    .badge-perfil {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 0.75rem;
+    }
+    .badge-gestao {
+      background: rgba(56, 189, 248, 0.15);
+      color: #38bdf8;
+      border: 1px solid rgba(56, 189, 248, 0.3);
+    }
+    .badge-rh {
+      background: rgba(239, 68, 68, 0.15);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+    .badge-saude {
+      background: rgba(52, 211, 153, 0.15);
+      color: #34d399;
+      border: 1px solid rgba(52, 211, 153, 0.3);
+    }
+    .badge-social {
+      background: rgba(251, 191, 36, 0.15);
+      color: #fbbf24;
+      border: 1px solid rgba(251, 191, 36, 0.3);
+    }
+  </style>
 </head>
 <body class="rhub-app">
 
@@ -94,24 +188,31 @@
 
   <!-- ============ CONTEÚDO PRINCIPAL ============ -->
   <main class="main-container" style="max-width: 1200px; margin: 24px auto; padding: 0 20px;">
+    
+    <!-- Banner de Feedback / Alertas -->
+    <div id="alert-feedback" style="display: none; padding: 12px 18px; border-radius: 8px; margin-bottom: 20px; font-size: 0.88rem; align-items: center; justify-content: space-between;">
+      <span id="alert-feedback-text"></span>
+      <button type="button" style="background: none; border: none; font-size: 1.1rem; cursor: pointer; color: inherit;" onclick="fecharAlerta()">&times;</button>
+    </div>
+
     <!-- Métricas Resumo -->
     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px;">
       <div class="card" style="padding: 16px; border: 1px solid var(--eng-border); background: var(--eng-surface); border-radius: var(--eng-radius);">
         <span style="font-size: 0.75rem; color: var(--eng-text-muted); text-transform: uppercase; font-weight: 600;">Total de Usuários</span>
-        <div style="font-size: 1.8rem; font-weight: 700; color: var(--eng-text-title); margin-top: 4px;">4</div>
+        <div id="metric-total" style="font-size: 1.8rem; font-weight: 700; color: var(--eng-text-title); margin-top: 4px;">—</div>
       </div>
       <div class="card" style="padding: 16px; border: 1px solid var(--eng-border); background: var(--eng-surface); border-radius: var(--eng-radius);">
-        <span style="font-size: 0.75rem; color: var(--eng-text-muted); text-transform: uppercase; font-weight: 600;">Administradores RH</span>
-        <div style="font-size: 1.8rem; font-weight: 700; color: var(--eng-primary); margin-top: 4px;">2</div>
+        <span style="font-size: 0.75rem; color: var(--eng-text-muted); text-transform: uppercase; font-weight: 600;">Perfil Gestão</span>
+        <div id="metric-gestao" style="font-size: 1.8rem; font-weight: 700; color: #38bdf8; margin-top: 4px;">—</div>
       </div>
       <div class="card" style="padding: 16px; border: 1px solid var(--eng-border); background: var(--eng-surface); border-radius: var(--eng-radius);">
-        <span style="font-size: 0.75rem; color: var(--eng-text-muted); text-transform: uppercase; font-weight: 600;">Analistas Operacionais</span>
-        <div style="font-size: 1.8rem; font-weight: 700; color: #2563eb; margin-top: 4px;">2</div>
+        <span style="font-size: 0.75rem; color: var(--eng-text-muted); text-transform: uppercase; font-weight: 600;">Perfil RH</span>
+        <div id="metric-rh" style="font-size: 1.8rem; font-weight: 700; color: #f87171; margin-top: 4px;">—</div>
       </div>
       <div class="card" style="padding: 16px; border: 1px solid var(--eng-border); background: var(--eng-surface); border-radius: var(--eng-radius);">
         <span style="font-size: 0.75rem; color: var(--eng-text-muted); text-transform: uppercase; font-weight: 600;">Status do Sistema</span>
-        <div style="font-size: 1rem; font-weight: 600; color: #16a34a; margin-top: 10px; display: flex; align-items: center; gap: 6px;">
-          <i class="bi bi-check-circle-fill"></i> Todos Ativos
+        <div id="metric-ativos" style="font-size: 1rem; font-weight: 600; color: #16a34a; margin-top: 10px; display: flex; align-items: center; gap: 6px;">
+          <i class="bi bi-check-circle-fill"></i> Carregando...
         </div>
       </div>
     </div>
@@ -121,9 +222,9 @@
       <div style="padding: 18px 24px; border-bottom: 1px solid var(--eng-border); display: flex; justify-content: space-between; align-items: center; background: #fff;">
         <div>
           <h2 style="font-size: 1.05rem; font-weight: 700; color: var(--eng-text-title); margin: 0;">Usuários Cadastrados</h2>
-          <span style="font-size: 0.78rem; color: var(--eng-text-muted);">Listagem de contas ativas com privilégio de acesso ao RHUB</span>
+          <span style="font-size: 0.78rem; color: var(--eng-text-muted);">Listagem de contas do banco de dados com credenciais e perfis de acesso</span>
         </div>
-        <button class="btn btn-primary" style="background: var(--eng-primary); border-color: var(--eng-primary); display: flex; align-items: center; gap: 8px; font-size: 0.85rem;" onclick="alert('Funcionalidade de cadastro em ambiente corporativo integrado com SSO/Active Directory.')">
+        <button class="btn btn-primary" id="btn-novo-usuario" style="background: var(--eng-primary); border-color: var(--eng-primary); display: flex; align-items: center; gap: 8px; font-size: 0.85rem;" onclick="abrirModalNovo()">
           <i class="bi bi-person-plus-fill"></i> Novo Usuário
         </button>
       </div>
@@ -132,73 +233,18 @@
         <table class="table" style="width: 100%; border-collapse: collapse; margin: 0;">
           <thead>
             <tr style="background: var(--eng-bg-alt); text-align: left; font-size: 0.75rem; color: var(--eng-text-muted); text-transform: uppercase; letter-spacing: 0.04em;">
-              <th style="padding: 12px 24px;">Nome</th>
-              <th style="padding: 12px 18px;">E-mail Corporativo</th>
+              <th style="padding: 12px 24px;">Matrícula</th>
+              <th style="padding: 12px 18px;">Nome Completo</th>
               <th style="padding: 12px 18px;">Perfil</th>
               <th style="padding: 12px 18px;">Status</th>
-              <th style="padding: 12px 18px;">Último Acesso</th>
+              <th style="padding: 12px 18px;">Criado em</th>
               <th style="padding: 12px 24px; text-align: right;">Ações</th>
             </tr>
           </thead>
-          <tbody style="font-size: 0.88rem; color: var(--eng-text-body);">
-            <tr style="border-bottom: 1px solid var(--eng-border);">
-              <td style="padding: 14px 24px; font-weight: 600; color: var(--eng-text-title);">
-                <div style="display: flex; align-items: center; gap: 10px;">
-                  <span style="width: 32px; height: 32px; border-radius: 50%; background: var(--eng-primary-tint); color: var(--eng-primary); display: flex; align-items: center; justify-content: center; font-weight: 700;">AD</span>
-                  Administrador RH
-                </div>
-              </td>
-              <td style="padding: 14px 18px;">rh.admin@omegaservice.com.br</td>
-              <td style="padding: 14px 18px;"><span class="badge" style="background: var(--eng-primary-tint); color: var(--eng-primary); padding: 4px 8px; border-radius: 4px; font-weight: 600; font-size: 0.75rem;">Administrador</span></td>
-              <td style="padding: 14px 18px;"><span style="color: #16a34a; font-weight: 600; display: inline-flex; align-items: center; gap: 4px;"><i class="bi bi-circle-fill" style="font-size: 0.45rem;"></i> Ativo</span></td>
-              <td style="padding: 14px 18px; color: var(--eng-text-muted); font-size: 0.8rem;">Hoje, 14:15</td>
-              <td style="padding: 14px 24px; text-align: right;">
-                <button class="btn btn-sm btn-ghost" title="Editar Permissões"><i class="bi bi-pencil"></i></button>
-              </td>
-            </tr>
-            <tr style="border-bottom: 1px solid var(--eng-border);">
-              <td style="padding: 14px 24px; font-weight: 600; color: var(--eng-text-title);">
-                <div style="display: flex; align-items: center; gap: 10px;">
-                  <span style="width: 32px; height: 32px; border-radius: 50%; background: #eff6ff; color: #2563eb; display: flex; align-items: center; justify-content: center; font-weight: 700;">CT</span>
-                  Coordenação Técnica
-                </div>
-              </td>
-              <td style="padding: 14px 18px;">coordenacao.ct251@omegaservice.com.br</td>
-              <td style="padding: 14px 18px;"><span class="badge" style="background: #eff6ff; color: #2563eb; padding: 4px 8px; border-radius: 4px; font-weight: 600; font-size: 0.75rem;">Analista Sênior</span></td>
-              <td style="padding: 14px 18px;"><span style="color: #16a34a; font-weight: 600; display: inline-flex; align-items: center; gap: 4px;"><i class="bi bi-circle-fill" style="font-size: 0.45rem;"></i> Ativo</span></td>
-              <td style="padding: 14px 18px; color: var(--eng-text-muted); font-size: 0.8rem;">Hoje, 11:30</td>
-              <td style="padding: 14px 24px; text-align: right;">
-                <button class="btn btn-sm btn-ghost" title="Editar Permissões"><i class="bi bi-pencil"></i></button>
-              </td>
-            </tr>
-            <tr style="border-bottom: 1px solid var(--eng-border);">
-              <td style="padding: 14px 24px; font-weight: 600; color: var(--eng-text-title);">
-                <div style="display: flex; align-items: center; gap: 10px;">
-                  <span style="width: 32px; height: 32px; border-radius: 50%; background: #f3f4f6; color: #4b5563; display: flex; align-items: center; justify-content: center; font-weight: 700;">OP</span>
-                  Operação & Ponto
-                </div>
-              </td>
-              <td style="padding: 14px 18px;">operacao.ponto@omegaservice.com.br</td>
-              <td style="padding: 14px 18px;"><span class="badge" style="background: #f3f4f6; color: #4b5563; padding: 4px 8px; border-radius: 4px; font-weight: 600; font-size: 0.75rem;">Operador Tratamento</span></td>
-              <td style="padding: 14px 18px;"><span style="color: #16a34a; font-weight: 600; display: inline-flex; align-items: center; gap: 4px;"><i class="bi bi-circle-fill" style="font-size: 0.45rem;"></i> Ativo</span></td>
-              <td style="padding: 14px 18px; color: var(--eng-text-muted); font-size: 0.8rem;">Ontem, 17:40</td>
-              <td style="padding: 14px 24px; text-align: right;">
-                <button class="btn btn-sm btn-ghost" title="Editar Permissões"><i class="bi bi-pencil"></i></button>
-              </td>
-            </tr>
+          <tbody id="tabela-usuarios-body" style="font-size: 0.88rem; color: var(--eng-text-body);">
             <tr>
-              <td style="padding: 14px 24px; font-weight: 600; color: var(--eng-text-title);">
-                <div style="display: flex; align-items: center; gap: 10px;">
-                  <span style="width: 32px; height: 32px; border-radius: 50%; background: var(--eng-primary-tint); color: var(--eng-primary); display: flex; align-items: center; justify-content: center; font-weight: 700;">GL</span>
-                  Gerência de Logística
-                </div>
-              </td>
-              <td style="padding: 14px 18px;">gerencia.log@omegaservice.com.br</td>
-              <td style="padding: 14px 18px;"><span class="badge" style="background: var(--eng-primary-tint); color: var(--eng-primary); padding: 4px 8px; border-radius: 4px; font-weight: 600; font-size: 0.75rem;">Administrador</span></td>
-              <td style="padding: 14px 18px;"><span style="color: #16a34a; font-weight: 600; display: inline-flex; align-items: center; gap: 4px;"><i class="bi bi-circle-fill" style="font-size: 0.45rem;"></i> Ativo</span></td>
-              <td style="padding: 14px 18px; color: var(--eng-text-muted); font-size: 0.8rem;">28/09/2026</td>
-              <td style="padding: 14px 24px; text-align: right;">
-                <button class="btn btn-sm btn-ghost" title="Editar Permissões"><i class="bi bi-pencil"></i></button>
+              <td colspan="6" style="padding: 30px; text-align: center; color: var(--eng-text-muted);">
+                <i class="bi bi-arrow-repeat spin"></i> Carregando usuários...
               </td>
             </tr>
           </tbody>
@@ -207,7 +253,70 @@
     </div>
   </main>
 
+  <!-- ============ MODAL DE USUÁRIO (CRIAR / EDITAR) ============ -->
+  <div class="modal-backdrop-custom" id="modal-usuario-backdrop">
+    <div class="modal-dialog-custom">
+      <div style="padding: 18px 24px; border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: space-between; align-items: center;">
+        <h3 id="modal-usuario-titulo" style="margin: 0; font-size: 1.1rem; font-weight: 700; color: #f8fafc;">Novo Usuário</h3>
+        <button type="button" style="background: none; border: none; color: #94a3b8; font-size: 1.4rem; cursor: pointer; line-height: 1;" onclick="fecharModal()">&times;</button>
+      </div>
+      
+      <form id="form-usuario" onsubmit="salvarUsuario(event)" style="padding: 24px;">
+        <input type="hidden" id="usuario-id">
+
+        <div class="form-group-custom">
+          <label class="form-label-custom" for="usuario-matricula">Matrícula <span style="color:#ef4444;">*</span></label>
+          <input type="text" id="usuario-matricula" class="form-control-custom" placeholder="Ex: 0001, 10452..." required>
+        </div>
+
+        <div class="form-group-custom">
+          <label class="form-label-custom" for="usuario-nome">Nome Completo <span style="color:#ef4444;">*</span></label>
+          <input type="text" id="usuario-nome" class="form-control-custom" placeholder="Ex: Maria dos Santos" required>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+          <div class="form-group-custom">
+            <label class="form-label-custom" for="usuario-perfil">Perfil de Acesso <span style="color:#ef4444;">*</span></label>
+            <select id="usuario-perfil" class="form-control-custom" required>
+              <option value="Gestao">Gestão (Acesso Total)</option>
+              <option value="RH">RH (Operações & Painel)</option>
+              <option value="Saude">Saúde (Acompanhamento)</option>
+              <option value="Social">Social (Consultas)</option>
+            </select>
+          </div>
+
+          <div class="form-group-custom">
+            <label class="form-label-custom" for="usuario-status">Status <span style="color:#ef4444;">*</span></label>
+            <select id="usuario-status" class="form-control-custom" required>
+              <option value="Ativo">Ativo</option>
+              <option value="Inativo">Inativo</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group-custom">
+          <label class="form-label-custom" for="usuario-senha">
+            Senha <span id="label-senha-obrigatoria" style="color:#ef4444;">*</span>
+            <span id="label-senha-ajuda" style="color: #64748b; font-size: 0.72rem; text-transform: none; margin-left: 6px; display: none;">(Deixe em branco para manter a atual)</span>
+          </label>
+          <input type="password" id="usuario-senha" class="form-control-custom" placeholder="Digite uma senha segura">
+        </div>
+
+        <div style="margin-top: 24px; display: flex; justify-content: flex-end; gap: 12px;">
+          <button type="button" class="btn btn-outline" style="background: transparent; color: #94a3b8; border: 1px solid #475569; padding: 8px 16px; border-radius: 6px; font-size: 0.88rem; cursor: pointer;" onclick="fecharModal()">
+            Cancelar
+          </button>
+          <button type="submit" id="btn-salvar-usuario" class="btn btn-primary" style="background: #38bdf8; border: none; color: #0f172a; font-weight: 700; padding: 8px 20px; border-radius: 6px; font-size: 0.88rem; cursor: pointer;">
+            Salvar Usuário
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script>
+    var listaUsuariosCache = [];
+
     document.addEventListener('DOMContentLoaded', function () {
       var el = document.getElementById('data-por-extenso');
       if (el) {
@@ -215,7 +324,287 @@
           weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
         });
       }
+
+      carregarUsuarios();
     });
+
+    function mostrarAlerta(msg, tipo) {
+      var box = document.getElementById('alert-feedback');
+      var txt = document.getElementById('alert-feedback-text');
+      if (!box || !txt) return;
+
+      txt.textContent = msg;
+      if (tipo === 'erro') {
+        box.style.background = 'rgba(239, 68, 68, 0.15)';
+        box.style.color = '#f87171';
+        box.style.border = '1px solid rgba(239, 68, 68, 0.3)';
+      } else {
+        box.style.background = 'rgba(16, 185, 129, 0.15)';
+        box.style.color = '#34d399';
+        box.style.border = '1px solid rgba(16, 185, 129, 0.3)';
+      }
+      box.style.display = 'flex';
+      setTimeout(function () {
+        box.style.display = 'none';
+      }, 5000);
+    }
+
+    function fecharAlerta() {
+      var box = document.getElementById('alert-feedback');
+      if (box) box.style.display = 'none';
+    }
+
+    async function carregarUsuarios() {
+      var tbody = document.getElementById('tabela-usuarios-body');
+      try {
+        var resp = await fetch('/api/usuarios');
+        var data = await resp.json();
+
+        if (!data.success) {
+          throw new Error(data.error || 'Erro ao carregar usuários.');
+        }
+
+        listaUsuariosCache = data.usuarios || [];
+        renderizarTabela(listaUsuariosCache);
+        atualizarMetricas(listaUsuariosCache);
+      } catch (err) {
+        console.error('Falha ao listar usuários:', err);
+        tbody.innerHTML = '<tr><td colspan="6" style="padding: 24px; text-align: center; color: #ef4444;"><i class="bi bi-exclamation-triangle"></i> Falha ao carregar usuários: ' + escapeHtml(err.message) + '</td></tr>';
+      }
+    }
+
+    function atualizarMetricas(usuarios) {
+      var total = usuarios.length;
+      var gestao = usuarios.filter(function (u) { return u.perfil === 'Gestao'; }).length;
+      var rh = usuarios.filter(function (u) { return u.perfil === 'RH'; }).length;
+      var ativos = usuarios.filter(function (u) { return u.status === 'Ativo'; }).length;
+
+      document.getElementById('metric-total').textContent = total;
+      document.getElementById('metric-gestao').textContent = gestao;
+      document.getElementById('metric-rh').textContent = rh;
+      
+      var elAtivos = document.getElementById('metric-ativos');
+      if (ativos === total) {
+        elAtivos.innerHTML = '<i class="bi bi-check-circle-fill"></i> Todos Ativos (' + ativos + ')';
+        elAtivos.style.color = '#16a34a';
+      } else {
+        elAtivos.innerHTML = '<i class="bi bi-info-circle-fill"></i> ' + ativos + ' de ' + total + ' Ativos';
+        elAtivos.style.color = '#f59e0b';
+      }
+    }
+
+    function renderizarTabela(usuarios) {
+      var tbody = document.getElementById('tabela-usuarios-body');
+      if (!usuarios || usuarios.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="padding: 24px; text-align: center; color: var(--eng-text-muted);">Nenhum usuário cadastrado no momento.</td></tr>';
+        return;
+      }
+
+      var html = '';
+      usuarios.forEach(function (u) {
+        var perfilClass = 'badge-gestao';
+        if (u.perfil === 'RH') perfilClass = 'badge-rh';
+        else if (u.perfil === 'Saude') perfilClass = 'badge-saude';
+        else if (u.perfil === 'Social') perfilClass = 'badge-social';
+
+        var statusCor = u.status === 'Ativo' ? '#16a34a' : '#94a3b8';
+        var statusIcon = u.status === 'Ativo' ? 'bi-circle-fill' : 'bi-dash-circle-fill';
+
+        var dataFormatada = '—';
+        if (u.created_at) {
+          try {
+            var d = new Date(u.created_at);
+            dataFormatada = d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+          } catch (e) {}
+        }
+
+        var isRootAdmin = u.matricula === '0000';
+
+        html += '<tr style="border-bottom: 1px solid var(--eng-border);">' +
+          '<td style="padding: 14px 24px; font-weight: 700; color: var(--eng-text-title);">' +
+            '<span style="background: #f1f5f9; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 0.85rem;">' + escapeHtml(u.matricula) + '</span>' +
+          '</td>' +
+          '<td style="padding: 14px 18px; font-weight: 600; color: var(--eng-text-title);">' +
+            '<div style="display: flex; align-items: center; gap: 10px;">' +
+              '<span style="width: 32px; height: 32px; border-radius: 50%; background: var(--eng-primary-tint); color: var(--eng-primary); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.8rem;">' +
+                escapeHtml(getIniciais(u.nome)) +
+              '</span>' +
+              '<span>' + escapeHtml(u.nome) + '</span>' +
+            '</div>' +
+          '</td>' +
+          '<td style="padding: 14px 18px;">' +
+            '<span class="badge-perfil ' + perfilClass + '">' + escapeHtml(u.perfil) + '</span>' +
+          '</td>' +
+          '<td style="padding: 14px 18px;">' +
+            '<span style="color: ' + statusCor + '; font-weight: 600; display: inline-flex; align-items: center; gap: 4px;">' +
+              '<i class="bi ' + statusIcon + '" style="font-size: 0.45rem;"></i> ' + escapeHtml(u.status) +
+            '</span>' +
+          '</td>' +
+          '<td style="padding: 14px 18px; color: var(--eng-text-muted); font-size: 0.8rem;">' +
+            dataFormatada +
+          '</td>' +
+          '<td style="padding: 14px 24px; text-align: right;">' +
+            '<div style="display: inline-flex; gap: 6px;">' +
+              '<button type="button" class="btn btn-sm btn-ghost" title="Editar Usuário" onclick="editarUsuario(' + u.id + ')" style="padding: 4px 8px; border: 1px solid var(--eng-border); border-radius: 4px; background: transparent; cursor: pointer;">' +
+                '<i class="bi bi-pencil" style="color: #2563eb;"></i>' +
+              '</button>' +
+              (!isRootAdmin ?
+                '<button type="button" class="btn btn-sm btn-ghost" title="Excluir Usuário" onclick="excluirUsuario(' + u.id + ', \'' + escapeHtml(u.matricula) + '\')" style="padding: 4px 8px; border: 1px solid var(--eng-border); border-radius: 4px; background: transparent; cursor: pointer;">' +
+                  '<i class="bi bi-trash" style="color: #ef4444;"></i>' +
+                '</button>' :
+                '<button type="button" class="btn btn-sm btn-ghost" title="Administrador Master não pode ser excluído" disabled style="opacity: 0.35; padding: 4px 8px; border: 1px solid var(--eng-border); border-radius: 4px; background: transparent; cursor: not-allowed;">' +
+                  '<i class="bi bi-shield-lock"></i>' +
+                '</button>'
+              ) +
+            '</div>' +
+          '</td>' +
+        '</tr>';
+      });
+
+      tbody.innerHTML = html;
+    }
+
+    function getIniciais(nome) {
+      if (!nome) return 'OM';
+      var partes = nome.trim().split(/\s+/);
+      if (partes.length === 1) return partes[0].substring(0, 2).toUpperCase();
+      return (partes[0][0] + partes[partes.length - 1][0]).toUpperCase();
+    }
+
+    function abrirModalNovo() {
+      document.getElementById('modal-usuario-titulo').textContent = 'Novo Usuário';
+      document.getElementById('usuario-id').value = '';
+      document.getElementById('usuario-matricula').value = '';
+      document.getElementById('usuario-matricula').readOnly = false;
+      document.getElementById('usuario-nome').value = '';
+      document.getElementById('usuario-perfil').value = 'Gestao';
+      document.getElementById('usuario-status').value = 'Ativo';
+      document.getElementById('usuario-senha').value = '';
+      document.getElementById('usuario-senha').required = true;
+      document.getElementById('label-senha-obrigatoria').style.display = 'inline';
+      document.getElementById('label-senha-ajuda').style.display = 'none';
+
+      document.getElementById('modal-usuario-backdrop').classList.add('active');
+    }
+
+    function editarUsuario(id) {
+      var u = listaUsuariosCache.find(function (item) { return item.id === id; });
+      if (!u) return;
+
+      document.getElementById('modal-usuario-titulo').textContent = 'Editar Usuário (' + u.matricula + ')';
+      document.getElementById('usuario-id').value = u.id;
+      document.getElementById('usuario-matricula').value = u.matricula;
+      document.getElementById('usuario-matricula').readOnly = (u.matricula === '0000');
+      document.getElementById('usuario-nome').value = u.nome;
+      document.getElementById('usuario-perfil').value = u.perfil;
+      document.getElementById('usuario-status').value = u.status;
+      document.getElementById('usuario-senha').value = '';
+      document.getElementById('usuario-senha').required = false;
+      document.getElementById('label-senha-obrigatoria').style.display = 'none';
+      document.getElementById('label-senha-ajuda').style.display = 'inline';
+
+      document.getElementById('modal-usuario-backdrop').classList.add('active');
+    }
+
+    function fecharModal() {
+      document.getElementById('modal-usuario-backdrop').classList.remove('active');
+    }
+
+    async function salvarUsuario(e) {
+      e.preventDefault();
+      var btn = document.getElementById('btn-salvar-usuario');
+      var id = document.getElementById('usuario-id').value;
+      var matricula = document.getElementById('usuario-matricula').value.trim();
+      var nome = document.getElementById('usuario-nome').value.trim();
+      var perfil = document.getElementById('usuario-perfil').value;
+      var status = document.getElementById('usuario-status').value;
+      var senha = document.getElementById('usuario-senha').value;
+
+      if (!matricula || !nome) {
+        alert('Matrícula e Nome são obrigatórios.');
+        return;
+      }
+
+      if (!id && !senha) {
+        alert('A senha é obrigatória para criação de novo usuário.');
+        return;
+      }
+
+      var payload = {
+        matricula: matricula,
+        nome: nome,
+        perfil: perfil,
+        status: status
+      };
+
+      if (id) payload.id = parseInt(id, 10);
+      if (senha) payload.senha = senha;
+
+      btn.disabled = true;
+      btn.textContent = 'Salvando...';
+
+      try {
+        var resp = await fetch('/api/usuarios', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        var data = await resp.json();
+
+        if (!data.success) {
+          throw new Error(data.error || 'Erro ao salvar usuário.');
+        }
+
+        fecharModal();
+        mostrarAlerta('Usuário salvo com sucesso!', 'sucesso');
+        await carregarUsuarios();
+      } catch (err) {
+        console.error('Erro ao salvar usuário:', err);
+        alert('Falha ao salvar: ' + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Salvar Usuário';
+      }
+    }
+
+    async function excluirUsuario(id, matricula) {
+      if (matricula === '0000') {
+        alert('O usuário Master (0000) não pode ser excluído.');
+        return;
+      }
+
+      if (!confirm('Tem certeza que deseja excluir o usuário de matrícula ' + matricula + '?')) {
+        return;
+      }
+
+      try {
+        var resp = await fetch('/api/usuarios/' + id, {
+          method: 'DELETE'
+        });
+
+        var data = await resp.json();
+
+        if (!data.success) {
+          throw new Error(data.error || 'Erro ao excluir usuário.');
+        }
+
+        mostrarAlerta('Usuário excluído com sucesso!', 'sucesso');
+        await carregarUsuarios();
+      } catch (err) {
+        console.error('Erro ao excluir:', err);
+        mostrarAlerta('Falha ao excluir: ' + err.message, 'erro');
+      }
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
   </script>
   <script defer src="js/sidebar-hover.js"></script>
 </body>

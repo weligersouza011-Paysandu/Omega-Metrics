@@ -1,4 +1,5 @@
 const { Pool, types } = require('pg');
+const bcrypt = require('bcryptjs');
 
 // String de conexão oficial com fallback para Neon Pooler
 const FALLBACK_NEON_DATABASE_URL = "postgresql://neondb_owner:npg_7PTjCWBv0xSs@ep-polished-bread-b43m7uaq-pooler.c-6.us-east-2.aws.neon.tech/neondb?sslmode=require";
@@ -51,6 +52,7 @@ function initDatabase(pgPool) {
 
   return createSchema()
     .then(() => seedMotivosDesligamento())
+    .then(() => seedUsuariosDefault())
     .then(async () => {
       const countResult = await pool.query('SELECT COUNT(*) AS c FROM ponto_historico');
       const totalRegistros = parseInt(countResult.rows[0]?.c || 0, 10);
@@ -210,6 +212,17 @@ async function createSchema() {
       descricao VARCHAR(100)
     );
     CREATE INDEX IF NOT EXISTS idx_calendario_data ON calendario_operacional (data);
+
+    CREATE TABLE IF NOT EXISTS usuarios (
+      id SERIAL PRIMARY KEY,
+      matricula VARCHAR(50) UNIQUE NOT NULL,
+      nome VARCHAR(150) NOT NULL,
+      senha_hash VARCHAR(255) NOT NULL,
+      perfil VARCHAR(20) NOT NULL CHECK (perfil IN ('Gestao', 'RH', 'Saude', 'Social')),
+      status VARCHAR(20) DEFAULT 'Ativo',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_usuarios_matricula ON usuarios (matricula);
   `);
   await pool.query('ALTER TABLE ponto_historico ADD COLUMN IF NOT EXISTS cid TEXT');
   
@@ -239,6 +252,7 @@ async function createSchema() {
     SELECT setval('desligamentos_historico_id_seq', GREATEST((SELECT COALESCE(MAX(id), 1) FROM desligamentos_historico), 1));
     SELECT setval('desligamentos_justificados_id_seq', GREATEST((SELECT COALESCE(MAX(id), 1) FROM desligamentos_justificados), 1));
     SELECT setval('ponto_historico_id_seq', GREATEST((SELECT COALESCE(MAX(id), 1) FROM ponto_historico), 1));
+    SELECT setval('usuarios_id_seq', GREATEST((SELECT COALESCE(MAX(id), 1) FROM usuarios), 1));
   `);
 }
 
@@ -261,6 +275,113 @@ async function seedMotivosDesligamento() {
       );
     }
   });
+}
+
+/**
+ * seedUsuariosDefault — Garante que exista pelo menos o Administrador padrão ('0000').
+ */
+async function seedUsuariosDefault() {
+  const countResult = await pool.query('SELECT COUNT(*) as c FROM usuarios');
+  if (parseInt(countResult.rows[0].c, 10) > 0) return;
+
+  const defaultHash = await bcrypt.hash('admin123', 10);
+  await pool.query(`
+    INSERT INTO usuarios (matricula, nome, senha_hash, perfil, status)
+    VALUES ($1, $2, $3, $4, $5)
+    ON CONFLICT (matricula) DO NOTHING
+  `, ['0000', 'Gestor Master', defaultHash, 'Gestao', 'Ativo']);
+  console.log('👤 [Usuários]: Administrador padrão inicial criado (Matrícula: 0000 | Senha: admin123 | Perfil: Gestao)');
+}
+
+/**
+ * Funções de Acesso e Gerenciamento de Usuários
+ */
+async function getUsuarioPorMatricula(matricula) {
+  if (!matricula) return null;
+  const result = await pool.query(
+    'SELECT * FROM usuarios WHERE LOWER(TRIM(matricula)) = LOWER(TRIM($1)) LIMIT 1',
+    [matricula]
+  );
+  return result.rows[0] || null;
+}
+
+async function getUsuarioPorId(id) {
+  const result = await pool.query(
+    'SELECT id, matricula, nome, perfil, status, created_at FROM usuarios WHERE id = $1',
+    [id]
+  );
+  return result.rows[0] || null;
+}
+
+async function listarUsuarios() {
+  const result = await pool.query(`
+    SELECT id, matricula, nome, perfil, status, created_at
+    FROM usuarios
+    ORDER BY id ASC
+  `);
+  return result.rows;
+}
+
+async function criarUsuario({ matricula, nome, senha, perfil, status }) {
+  const senhaHash = await bcrypt.hash(senha || '123456', 10);
+  const perfisValidos = ['Gestao', 'RH', 'Saude', 'Social'];
+  const perfilFinal = perfisValidos.includes(perfil) ? perfil : 'RH';
+  const statusFinal = status === 'Inativo' ? 'Inativo' : 'Ativo';
+
+  const result = await pool.query(`
+    INSERT INTO usuarios (matricula, nome, senha_hash, perfil, status)
+    VALUES ($1, $2, $3, $4, $5)
+    RETURNING id, matricula, nome, perfil, status, created_at
+  `, [String(matricula).trim(), String(nome).trim(), senhaHash, perfilFinal, statusFinal]);
+
+  return result.rows[0];
+}
+
+async function atualizarUsuario(id, { nome, perfil, status, senha }) {
+  const campos = [];
+  const valores = [];
+  let idx = 1;
+
+  if (nome && String(nome).trim()) {
+    campos.push(`nome = $${idx++}`);
+    valores.push(String(nome).trim());
+  }
+  if (perfil) {
+    const perfisValidos = ['Gestao', 'RH', 'Saude', 'Social'];
+    if (perfisValidos.includes(perfil)) {
+      campos.push(`perfil = $${idx++}`);
+      valores.push(perfil);
+    }
+  }
+  if (status) {
+    campos.push(`status = $${idx++}`);
+    valores.push(status === 'Inativo' ? 'Inativo' : 'Ativo');
+  }
+  if (senha && String(senha).trim()) {
+    const senhaHash = await bcrypt.hash(String(senha).trim(), 10);
+    campos.push(`senha_hash = $${idx++}`);
+    valores.push(senhaHash);
+  }
+
+  if (campos.length === 0) return await getUsuarioPorId(id);
+
+  valores.push(id);
+  const result = await pool.query(`
+    UPDATE usuarios
+    SET ${campos.join(', ')}
+    WHERE id = $${idx}
+    RETURNING id, matricula, nome, perfil, status, created_at
+  `, valores);
+
+  return result.rows[0] || null;
+}
+
+async function excluirUsuario(id) {
+  const result = await pool.query(
+    'DELETE FROM usuarios WHERE id = $1 AND matricula <> $2 RETURNING id, matricula',
+    [id, '0000']
+  );
+  return result.rowCount > 0;
 }
 
 function generateLoteId() {
@@ -1383,5 +1504,11 @@ module.exports = {
   formatHorarioValue,
   verificarMatriculasNovas,
   updatePontoBatch,
-  formatFriendlyDbError
+  formatFriendlyDbError,
+  getUsuarioPorMatricula,
+  getUsuarioPorId,
+  listarUsuarios,
+  criarUsuario,
+  atualizarUsuario,
+  excluirUsuario
 };

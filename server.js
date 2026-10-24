@@ -13,6 +13,8 @@ const { Pool } = require('pg');
 // Invalidado automaticamente ao confirmar uma nova importação.
 const kpiCache = new NodeCache({ stdTTL: 60, checkperiod: 90, useClones: false });
 
+const bcrypt = require('bcryptjs');
+
 const { initDatabase, createPgPool, checkDatabaseHealth, FALLBACK_NEON_DATABASE_URL,
   createLote, getLote, confirmLote,
   upsertPontoHistorico, insertDesligamentosJustificados, updateCalendario,
@@ -22,7 +24,8 @@ const { initDatabase, createPgPool, checkDatabaseHealth, FALLBACK_NEON_DATABASE_
   upsertDiaOperacional, gerarCalendarioAno,
   getPeriodoLimites, getEfetivoTotal,
   countByDate, getByDate, deleteByDate, formatHorarioValue, verificarMatriculasNovas, updatePontoBatch,
-  formatFriendlyDbError } = require('./src/database/dbService');
+  formatFriendlyDbError,
+  getUsuarioPorMatricula, getUsuarioPorId, listarUsuarios, criarUsuario, atualizarUsuario, excluirUsuario } = require('./src/database/dbService');
 
 const { parseExcelFiles, validateData, validatePontoRow, applyCorrecoes, toPontoDataShape, toDesligDataShape, calculateMetrics, formatExcelDate, excelDecimalToTime, STATUS_CONFIG, STATUS_ALIASES, getStatusMeta, calcularAbsenteismo, calcEfetivoAtivoPorMes, calcTurnoverMensal, calcTurnoverPorFuncao, applyCrossFilters, applyCrossFiltersDeslig, temFiltro, META_TURNOVER_GERAL, META_TURNOVER_OPERACIONAL, MOTIVOS_TURNOVER_RELEVANTES } = require('./src/services/tratamentoService');
 
@@ -369,7 +372,163 @@ app.get('/ping', (req, res) => {
   return res.status(200).send('pong');
 });
 
+/* ============================================================
+   AUTENTICAÇÃO & GESTÃO DE USUÁRIOS
+   ============================================================ */
+
+/**
+ * POST /api/auth/login
+ * Autentica usuário por matrícula e senha.
+ */
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { matricula, senha } = req.body;
+    if (!matricula || !senha) {
+      return res.status(400).json({
+        success: false,
+        error: 'Matrícula e senha são obrigatórias.'
+      });
+    }
+
+    const usuario = await getUsuarioPorMatricula(matricula);
+    if (!usuario) {
+      return res.status(401).json({
+        success: false,
+        error: 'Matrícula ou senha incorretos.'
+      });
+    }
+
+    if (usuario.status === 'Inativo') {
+      return res.status(403).json({
+        success: false,
+        error: 'Esta conta de usuário está desativada. Consulte o Administrador.'
+      });
+    }
+
+    const senhaValida = await bcrypt.compare(String(senha), usuario.senha_hash);
+    if (!senhaValida) {
+      return res.status(401).json({
+        success: false,
+        error: 'Matrícula ou senha incorretos.'
+      });
+    }
+
+    const sessionToken = Buffer.from(`${usuario.id}:${usuario.matricula}:${Date.now()}`).toString('base64');
+
+    return res.json({
+      success: true,
+      message: 'Autenticado com sucesso.',
+      token: sessionToken,
+      usuario: {
+        id: usuario.id,
+        matricula: usuario.matricula,
+        nome: usuario.nome,
+        perfil: usuario.perfil,
+        status: usuario.status
+      }
+    });
+  } catch (err) {
+    console.error('Erro na autenticação:', err);
+    return res.status(500).json({ success: false, error: 'Erro interno ao processar login.' });
+  }
+});
+
+/**
+ * GET /api/auth/me
+ * Retorna dados da sessão ou status de autenticação.
+ */
+app.get('/api/auth/me', (req, res) => {
+  return res.json({ success: true, timestamp: new Date() });
+});
+
+/**
+ * GET /api/usuarios
+ * Retorna listagem de usuários do sistema.
+ */
+app.get('/api/usuarios', async (req, res) => {
+  try {
+    const usuarios = await listarUsuarios();
+    return res.json({
+      success: true,
+      total: usuarios.length,
+      usuarios
+    });
+  } catch (err) {
+    console.error('Erro ao listar usuários:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/usuarios
+ * Cadastro ou edição de usuário.
+ */
+app.post('/api/usuarios', async (req, res) => {
+  try {
+    const { id, matricula, nome, senha, perfil, status } = req.body;
+
+    if (id) {
+      const atualizado = await atualizarUsuario(id, { nome, perfil, status, senha });
+      if (!atualizado) {
+        return res.status(404).json({ success: false, error: 'Usuário não encontrado.' });
+      }
+      return res.json({
+        success: true,
+        message: 'Usuário atualizado com sucesso.',
+        usuario: atualizado
+      });
+    }
+
+    if (!matricula || !nome || !senha || !perfil) {
+      return res.status(400).json({
+        success: false,
+        error: 'Matrícula, Nome, Senha e Perfil são obrigatórios.'
+      });
+    }
+
+    const existente = await getUsuarioPorMatricula(matricula);
+    if (existente) {
+      return res.status(409).json({
+        success: false,
+        error: `A matrícula '${matricula}' já está cadastrada para outro usuário.`
+      });
+    }
+
+    const novo = await criarUsuario({ matricula, nome, senha, perfil, status });
+    return res.status(201).json({
+      success: true,
+      message: 'Usuário cadastrado com sucesso.',
+      usuario: novo
+    });
+  } catch (err) {
+    console.error('Erro ao salvar usuário:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * DELETE /api/usuarios/:id
+ * Exclusão de usuário (impede remoção do Administrador Master '0000').
+ */
+app.delete('/api/usuarios/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const ok = await excluirUsuario(id);
+    if (!ok) {
+      return res.status(400).json({
+        success: false,
+        error: 'Não foi possível remover o usuário (o usuário Gestor Master não pode ser excluído).'
+      });
+    }
+    return res.json({ success: true, message: 'Usuário removido com sucesso.' });
+  } catch (err) {
+    console.error('Erro ao excluir usuário:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
+app.get('/login', (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
 
 const upload = multer({
