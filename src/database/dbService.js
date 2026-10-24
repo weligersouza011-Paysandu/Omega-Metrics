@@ -278,16 +278,13 @@ async function seedMotivosDesligamento() {
 }
 
 /**
- * seedUsuariosDefault — Garante que existam os Administradores padrão ('0000' e '23574').
+ * seedUsuariosDefault — Garante que exista o Gestor Master ('23574') e remove '0000'.
  */
 async function seedUsuariosDefault() {
-  const defaultHash0000 = await bcrypt.hash('admin123', 10);
-  await pool.query(`
-    INSERT INTO usuarios (matricula, nome, senha_hash, perfil, status)
-    VALUES ($1, $2, $3, $4, $5)
-    ON CONFLICT (matricula) DO NOTHING
-  `, ['0000', 'Gestor Master', defaultHash0000, 'Gestao', 'Ativo']);
+  // Remove usuário padrão temporário '0000' caso ainda exista
+  await pool.query("DELETE FROM usuarios WHERE matricula = '0000'");
 
+  // Garante o Gestor Master (Weligton Souza - 23574)
   const defaultHashWeligton = await bcrypt.hash('1234', 10);
   await pool.query(`
     INSERT INTO usuarios (matricula, nome, senha_hash, perfil, status)
@@ -298,7 +295,7 @@ async function seedUsuariosDefault() {
       status = EXCLUDED.status
   `, ['23574', 'Weligton Souza', defaultHashWeligton, 'Gestao', 'Ativo']);
 
-  console.log('👤 [Usuários]: Administradores padrão verificados (0000 | 23574)');
+  console.log('👤 [Usuários]: Gestor Master verificado (Matrícula: 23574 | Weligton Souza | Perfil: Gestao)');
 }
 
 /**
@@ -386,8 +383,8 @@ async function atualizarUsuario(id, { nome, perfil, status, senha }) {
 
 async function excluirUsuario(id) {
   const result = await pool.query(
-    'DELETE FROM usuarios WHERE id = $1 AND matricula NOT IN ($2, $3) RETURNING id, matricula',
-    [id, '0000', '23574']
+    'DELETE FROM usuarios WHERE id = $1 AND matricula <> $2 RETURNING id, matricula',
+    [id, '23574']
   );
   return result.rowCount > 0;
 }

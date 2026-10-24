@@ -42,13 +42,13 @@
       return;
     }
 
-    // Verificação de permissões específicas de página
-    var currentPath = window.location.pathname;
+    // Verificação estrita de permissões por página
+    var currentPath = window.location.pathname.toLowerCase();
 
-    // Gestão de Usuários: restrita ao perfil 'Gestao'
-    if (currentPath.indexOf('gestao_usuarios.html') !== -1) {
+    // Gestão de Usuários: restrita EXCLUSIVAMENTE ao perfil 'Gestao'
+    if (currentPath.indexOf('gestao_usuarios') !== -1 || currentPath.indexOf('usuarios') !== -1) {
       if (user.perfil !== 'Gestao') {
-        alert('Acesso restrito ao perfil de Gestão.');
+        alert('Acesso negado: a Gestão de Usuários é restrita ao perfil de Gestão.');
         window.location.replace('dashboard.html');
         return;
       }
@@ -62,10 +62,10 @@
   function applyProfileRestrictions(user) {
     var perfil = user.perfil || 'RH';
 
-    // Oculta links para Gestão de Usuários se o perfil não for 'Gestao'
+    // Se o perfil NÃO for 'Gestao', oculta todos os itens exclusivos de Gestão
     if (perfil !== 'Gestao') {
-      var gestaoLinks = document.querySelectorAll('a[href*="gestao_usuarios.html"], [data-sidebar-page="usuarios"]');
-      gestaoLinks.forEach(function (el) {
+      var itensRestritosGestao = document.querySelectorAll('[data-role-restrict="Gestao"], a[href*="gestao_usuarios"], [data-sidebar-page="usuarios"]');
+      itensRestritosGestao.forEach(function (el) {
         var li = el.closest('li');
         if (li) {
           li.style.display = 'none';

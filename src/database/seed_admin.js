@@ -9,6 +9,9 @@ async function seedAdmin() {
   });
 
   try {
+    // Remove usuário '0000'
+    await pool.query("DELETE FROM usuarios WHERE matricula = '0000'");
+
     const senhaHash = await bcrypt.hash('1234', 10);
     const sql = `
       INSERT INTO usuarios (matricula, nome, senha_hash, perfil, status)
@@ -23,6 +26,9 @@ async function seedAdmin() {
     const res = await pool.query(sql, ['23574', 'Weligton Souza', senhaHash, 'Gestao', 'Ativo']);
     console.log('✅ Usuário Gestor Master inserido/atualizado com sucesso:');
     console.log(res.rows[0]);
+
+    const lista = await pool.query('SELECT id, matricula, nome, perfil, status FROM usuarios ORDER BY id ASC');
+    console.log('📋 Usuários no banco de dados:', lista.rows);
   } catch (err) {
     console.error('❌ Erro ao semear usuário:', err);
   } finally {

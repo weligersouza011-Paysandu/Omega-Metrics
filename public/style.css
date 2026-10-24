@@ -2639,6 +2639,50 @@ body.pdf-export .rhub-filters { display: none !important; }
   color: var(--eng-primary, #7A0C1E);
 }
 
+/* Submenu da Sidebar (Página de RH) */
+.eng-sidebar__sublinks {
+  list-style: none;
+  padding: 4px 0 6px 34px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.eng-sidebar__sublink {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: #6B7280;
+  color: var(--eng-text-muted, #6B7280);
+  border-radius: 4px;
+  text-decoration: none;
+  transition: all 0.15s ease;
+}
+
+.eng-sidebar__sublink i {
+  font-size: 0.85rem;
+  width: 16px;
+  text-align: center;
+}
+
+.eng-sidebar__sublink:hover {
+  background: var(--eng-bg-alt, #F3F4F6);
+  color: var(--eng-text-title, #111827);
+  text-decoration: none;
+}
+
+.eng-sidebar__sublink.active {
+  background: rgba(122, 12, 30, 0.08);
+  background: var(--eng-primary-tint, rgba(122, 12, 30, 0.08));
+  color: #7A0C1E;
+  color: var(--eng-primary, #7A0C1E);
+  font-weight: 600;
+}
+
 /* Rodapé do Menu */
 .eng-sidebar__footer,
 .sidebar-hover-menu__footer {

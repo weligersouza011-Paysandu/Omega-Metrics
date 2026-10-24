@@ -4,6 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dashboard de RH — OMEGA RHUB CT251</title>
+  <!-- Favicon Oficial da Ômega -->
+  <link rel="icon" type="image/png" href="/assets/img/logo_omega_redonda.png">
+  <link rel="shortcut icon" href="/assets/img/logo_omega_redonda.png" type="image/png">
+  <link rel="apple-touch-icon" href="/assets/img/logo_omega_redonda.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -42,22 +46,59 @@
     <nav class="eng-sidebar__nav sidebar-hover-menu__nav">
       <span class="eng-sidebar__category sidebar-hover-menu__category">Navegação</span>
       <ul class="eng-sidebar__links sidebar-hover-menu__links">
-        <li>
+        <!-- 👤 Página do RH com sub-itens -->
+        <li class="sidebar-item-rh">
           <a href="dashboard.html" class="eng-sidebar__link sidebar-hover-menu__link active" data-sidebar-page="rh">
-            <i class="bi bi-speedometer2"></i>
-            <span>Página de RH</span>
-          </a>
-        </li>
-        <li>
-          <a href="gestao_usuarios.html" class="eng-sidebar__link sidebar-hover-menu__link" data-sidebar-page="usuarios">
             <i class="bi bi-people-fill"></i>
-            <span>Gestão de Usuários</span>
+            <span>Página do RH</span>
+          </a>
+          <ul class="eng-sidebar__sublinks">
+            <li>
+              <a href="dashboard.html" class="eng-sidebar__sublink active" data-sublink="dashboard">
+                <i class="bi bi-speedometer2"></i> <span>Dashboard</span>
+              </a>
+            </li>
+            <li>
+              <a href="tratamento.html" class="eng-sidebar__sublink" data-sublink="tratamento">
+                <i class="bi bi-cloud-arrow-up"></i> <span>Tratamento</span>
+              </a>
+            </li>
+            <li>
+              <a href="gerenciamento_dados.html" class="eng-sidebar__sublink" data-sublink="gestao">
+                <i class="bi bi-database-down"></i> <span>Gestão de Dados</span>
+              </a>
+            </li>
+            <li>
+              <a href="calendario_operacional.html" class="eng-sidebar__sublink" data-sublink="calendario">
+                <i class="bi bi-calendar3"></i> <span>Calendário Operacional</span>
+              </a>
+            </li>
+          </ul>
+        </li>
+
+        <!-- 🏥 Saúde (Futuro Módulo) -->
+        <li>
+          <a href="#" class="eng-sidebar__link sidebar-hover-menu__link" data-sidebar-page="saude" onclick="alert('Módulo de Saúde Ocupacional em desenvolvimento.'); return false;">
+            <i class="bi bi-heart-pulse-fill" style="color: #10b981;"></i>
+            <span>Saúde</span>
+            <span style="margin-left: auto; font-size: 0.65rem; background: rgba(16, 185, 129, 0.12); color: #10b981; padding: 2px 6px; border-radius: 10px; font-weight: 600;">Em breve</span>
           </a>
         </li>
+
+        <!-- 🤝 Social (Futuro Módulo) -->
         <li>
-          <a href="calendario_operacional.html" class="eng-sidebar__link sidebar-hover-menu__link" data-sidebar-page="calendario">
-            <i class="bi bi-calendar3"></i>
-            <span>Calendário Operacional</span>
+          <a href="#" class="eng-sidebar__link sidebar-hover-menu__link" data-sidebar-page="social" onclick="alert('Módulo de Assistência Social em desenvolvimento.'); return false;">
+            <i class="bi bi-hand-thumbs-up-fill" style="color: #f59e0b;"></i>
+            <span>Social</span>
+            <span style="margin-left: auto; font-size: 0.65rem; background: rgba(245, 158, 11, 0.12); color: #f59e0b; padding: 2px 6px; border-radius: 10px; font-weight: 600;">Em breve</span>
+          </a>
+        </li>
+
+        <!-- ⚙️ Gestão de Usuários (condicional: estritamente para Gestao) -->
+        <li data-role-restrict="Gestao">
+          <a href="gestao_usuarios.html" class="eng-sidebar__link sidebar-hover-menu__link" data-sidebar-page="usuarios">
+            <i class="bi bi-gear-fill" style="color: #0284c7;"></i>
+            <span>Gestão de Usuários</span>
           </a>
         </li>
       </ul>

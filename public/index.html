@@ -2,11 +2,24 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="refresh" content="0; url=dashboard.html">
   <title>Omega Metrics</title>
-  <script>window.location.replace('dashboard.html');</script>
+  <!-- Favicon Oficial da Ômega -->
+  <link rel="icon" type="image/png" href="/assets/img/logo_omega_redonda.png">
+  <link rel="shortcut icon" href="/assets/img/logo_omega_redonda.png" type="image/png">
+  <link rel="apple-touch-icon" href="/assets/img/logo_omega_redonda.png">
+  <script src="js/auth.js"></script>
+  <script>
+    (function() {
+      var user = window.OmegaAuth ? window.OmegaAuth.getUser() : null;
+      if (!user || !user.matricula) {
+        window.location.replace('login.html');
+      } else {
+        window.location.replace('dashboard.html');
+      }
+    })();
+  </script>
 </head>
-<body>
-  <p>Redirecionando para o <a href="dashboard.html">Módulo de Tratamento</a>...</p>
+<body style="background: #0f172a; color: #94a3b8; font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0;">
+  <p>Redirecionando para a aplicação...</p>
 </body>
 </html>

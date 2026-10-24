@@ -508,7 +508,7 @@ app.post('/api/usuarios', async (req, res) => {
 
 /**
  * DELETE /api/usuarios/:id
- * Exclusão de usuário (impede remoção do Administrador Master '0000').
+ * Exclusão de usuário (impede remoção do Gestor Master '23574').
  */
 app.delete('/api/usuarios/:id', async (req, res) => {
   try {
@@ -517,7 +517,7 @@ app.delete('/api/usuarios/:id', async (req, res) => {
     if (!ok) {
       return res.status(400).json({
         success: false,
-        error: 'Não foi possível remover o usuário (o usuário Gestor Master não pode ser excluído).'
+        error: 'Não foi possível remover o usuário (o usuário Gestor Master [23574] não pode ser excluído).'
       });
     }
     return res.json({ success: true, message: 'Usuário removido com sucesso.' });
@@ -528,6 +528,7 @@ app.delete('/api/usuarios/:id', async (req, res) => {
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
+app.get('/favicon.ico', (req, res) => res.sendFile(path.join(__dirname, 'public', 'assets', 'img', 'logo_omega_redonda.png')));
 app.get('/login', (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
 

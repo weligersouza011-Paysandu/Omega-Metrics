@@ -114,12 +114,28 @@
         link.classList.add('active');
         matched = true;
       } else if (page === 'rh' || page === 'dashboard') {
-        if (path.indexOf('dashboard') !== -1 || path === '/' || path.endsWith('/') || path.indexOf('tratamento') !== -1 || path.indexOf('gerenciamento') !== -1) {
+        if (path.indexOf('dashboard') !== -1 || path === '/' || path.endsWith('/') || path.indexOf('tratamento') !== -1 || path.indexOf('gerenciamento') !== -1 || path.indexOf('calendario') !== -1) {
           link.classList.add('active');
           matched = true;
         }
       }
     }
+
+    // Marca o sublink ativo correspondente
+    var sublinks = sidebar.querySelectorAll('.eng-sidebar__sublink');
+    sublinks.forEach(function (sub) {
+      sub.classList.remove('active');
+      var key = sub.getAttribute('data-sublink') || '';
+      if (key === 'dashboard' && (path.indexOf('dashboard') !== -1 || path === '/' || path.endsWith('/'))) {
+        sub.classList.add('active');
+      } else if (key === 'tratamento' && path.indexOf('tratamento') !== -1) {
+        sub.classList.add('active');
+      } else if (key === 'gestao' && path.indexOf('gerenciamento') !== -1) {
+        sub.classList.add('active');
+      } else if (key === 'calendario' && path.indexOf('calendario') !== -1) {
+        sub.classList.add('active');
+      }
+    });
 
     // Ativo por padrão se nenhuma outra aba específica coincidir (RH)
     if (!matched) {
