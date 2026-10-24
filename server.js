@@ -21,7 +21,8 @@ const { initDatabase, createPgPool, checkDatabaseHealth, FALLBACK_NEON_DATABASE_
   getCalendarioOperacional, getCalendarioDiasFatos, getCalendarioAno,
   upsertDiaOperacional, gerarCalendarioAno,
   getPeriodoLimites, getEfetivoTotal,
-  countByDate, getByDate, deleteByDate, formatHorarioValue, verificarMatriculasNovas, updatePontoBatch } = require('./src/database/dbService');
+  countByDate, getByDate, deleteByDate, formatHorarioValue, verificarMatriculasNovas, updatePontoBatch,
+  formatFriendlyDbError } = require('./src/database/dbService');
 
 const { parseExcelFiles, validateData, validatePontoRow, applyCorrecoes, toPontoDataShape, toDesligDataShape, calculateMetrics, formatExcelDate, excelDecimalToTime, STATUS_CONFIG, STATUS_ALIASES, getStatusMeta, calcularAbsenteismo, calcEfetivoAtivoPorMes, calcTurnoverMensal, calcTurnoverPorFuncao, applyCrossFilters, applyCrossFiltersDeslig, temFiltro, META_TURNOVER_GERAL, META_TURNOVER_OPERACIONAL, MOTIVOS_TURNOVER_RELEVANTES } = require('./src/services/tratamentoService');
 
@@ -179,9 +180,13 @@ app.use(cors({
 // ignorados — threshold evita overhead em respostas triviais como /api/health).
 app.use(compression({ threshold: 1024 }));
 app.use(express.json({ limit: '50mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+// Keep-alive ultra-rápido para Render e monitoramento externo (sem tocar no banco de dados)
+app.get('/ping', (req, res) => {
+  console.log('🏓 Ping recebido com sucesso de keep-alive.');
+  return res.status(200).send('pong');
+});
 
-app.get('/ping', (req, res) => res.status(200).send('pong'));
+app.use(express.static(path.join(__dirname, 'public')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
 
 const upload = multer({
@@ -398,17 +403,26 @@ app.post('/api/tratamento/confirmar-e-salvar', express.json(), async (req, res) 
       totalNormais: r.totalNormais || 0
     }));
 
+    const teveAtualizacao = (pontoResult.atualizados > 0) || (desligResult.atualizados > 0);
+    const mensagemFeedback = teveAtualizacao
+      ? 'Já existem registros cadastrados para este colaborador no período informado. Os dados foram atualizados com sucesso.'
+      : 'Dados processados e salvos com sucesso no BI!';
+
     return res.json({
       success: true,
+      mensagem: mensagemFeedback,
       resumo: {
         registrosInseridos: pontoResult.inseridos,
         registrosAtualizados: pontoResult.atualizados,
         registrosPulados: pontoResult.pulados || 0,
         desligamentosSalvos: desligResult.count,
+        desligamentosInseridos: desligResult.inseridos || 0,
+        desligamentosAtualizados: desligResult.atualizados || 0,
         correcoesAplicadas: correcaoResult.aplicadas,
         turnoverOperacional: desligamentosParaSalvar.filter(d => d.codigoMotivo !== 'reducao_quadro').length,
         reducaoQuadro: desligamentosParaSalvar.filter(d => d.codigoMotivo === 'reducao_quadro').length,
-        datasAtualizadas: datasTocadas
+        datasAtualizadas: datasTocadas,
+        mensagem: mensagemFeedback
       },
       dadosGravados
     });
@@ -416,7 +430,7 @@ app.post('/api/tratamento/confirmar-e-salvar', express.json(), async (req, res) 
     console.error('Erro ao confirmar e salvar:', err);
     return res.status(500).json({
       success: false,
-      error: err.message || 'Erro interno ao salvar os dados.'
+      error: formatFriendlyDbError(err)
     });
   }
 });
@@ -868,7 +882,7 @@ app.put('/api/dados/atualizar', async (req, res) => {
     kpiCache.flushAll();
     return res.json({ success: true, atualizados: count });
   } catch (err) {
-    return res.status(err.statusCode || 500).json({ success: false, error: err.message });
+    return res.status(err.statusCode || 500).json({ success: false, error: formatFriendlyDbError(err) });
   }
 });
 
@@ -1017,7 +1031,7 @@ app.post('/api/calendario-operacional/gerar-ano', async (req, res) => {
 app.use((err, req, res, next) => {
   console.error('⚠️ [Express Unhandled Error]:', err);
   if (!res.headersSent) {
-    res.status(500).json({ success: false, error: err.message || 'Erro interno no servidor' });
+    res.status(500).json({ success: false, error: formatFriendlyDbError(err) });
   }
 });
 

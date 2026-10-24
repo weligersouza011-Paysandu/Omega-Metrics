@@ -1128,14 +1128,16 @@
         showSuccess(data.resumo);
         pararProgresso();
         window.setOmegaProgress(100, 'Finalizando...');
-        window.showOmegaSuccess('Enviado com Sucesso para o BI!', function () {
+        var msgFinal = (data.resumo && data.resumo.mensagem) || data.mensagem || 'Enviado com Sucesso para o BI!';
+        window.showOmegaSuccess(msgFinal, function () {
           window.location.reload();
         });
       })
       .catch(function (err) {
         pararProgresso();
         window.closeOmegaLoader();
-        alert('Erro ao enviar para o BI: ' + mensagemErroRede(err));
+        var msgErro = (err && err.message) ? err.message : mensagemErroRede(err);
+        alert('Atenção: ' + msgErro);
         if (spinner) spinner.style.display = 'none';
         text.textContent = prevText;
         updateSendButton();

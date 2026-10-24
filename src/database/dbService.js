@@ -213,16 +213,32 @@ async function createSchema() {
   `);
   await pool.query('ALTER TABLE ponto_historico ADD COLUMN IF NOT EXISTS cid TEXT');
   
-  // Sincroniza dados históricos para desligamentos_historico de forma idempotente
+  // Sincroniza dados históricos para desligamentos_historico de forma idempotente sem colisão de IDs seriais
   await pool.query(`
     INSERT INTO desligamentos_historico (
-      id, data_desligamento, chave_funcionario, nome_funcionario, cargo, departamento,
+      data_desligamento, chave_funcionario, nome_funcionario, cargo, departamento,
       campo_detectado, valor_original, justificativa_rh, conta_turnover, lote_id, criado_em
     )
-    SELECT id, data_desligamento, chave_funcionario, nome_funcionario, cargo, departamento,
+    SELECT data_desligamento, chave_funcionario, nome_funcionario, cargo, departamento,
       campo_detectado, valor_original, justificativa_rh, conta_turnover, lote_id, criado_em
     FROM desligamentos_justificados
-    ON CONFLICT (data_desligamento, chave_funcionario) DO NOTHING;
+    ON CONFLICT (data_desligamento, chave_funcionario) DO UPDATE SET
+      nome_funcionario = EXCLUDED.nome_funcionario,
+      cargo = EXCLUDED.cargo,
+      departamento = EXCLUDED.departamento,
+      campo_detectado = EXCLUDED.campo_detectado,
+      valor_original = EXCLUDED.valor_original,
+      justificativa_rh = EXCLUDED.justificativa_rh,
+      conta_turnover = EXCLUDED.conta_turnover,
+      lote_id = EXCLUDED.lote_id,
+      criado_em = EXCLUDED.criado_em;
+  `);
+
+  // Alinha todas as sequences (SERIAL) com os maiores IDs existentes para prevenir violação de chave primária (_pkey)
+  await pool.query(`
+    SELECT setval('desligamentos_historico_id_seq', GREATEST((SELECT COALESCE(MAX(id), 1) FROM desligamentos_historico), 1));
+    SELECT setval('desligamentos_justificados_id_seq', GREATEST((SELECT COALESCE(MAX(id), 1) FROM desligamentos_justificados), 1));
+    SELECT setval('ponto_historico_id_seq', GREATEST((SELECT COALESCE(MAX(id), 1) FROM ponto_historico), 1));
   `);
 }
 
@@ -425,6 +441,7 @@ async function insertDesligamentosJustificados(desligamentos, loteId) {
       conta_turnover = excluded.conta_turnover,
       lote_id = excluded.lote_id,
       criado_em = excluded.criado_em
+    RETURNING (xmax = 0) AS is_insert
   `;
 
   const upsertHistoricoSql = `
@@ -443,10 +460,19 @@ async function insertDesligamentosJustificados(desligamentos, loteId) {
       conta_turnover = excluded.conta_turnover,
       lote_id = excluded.lote_id,
       criado_em = excluded.criado_em
+    RETURNING (xmax = 0) AS is_insert
   `;
 
   return withTransaction(async (client) => {
+    // Sincroniza preventivamente as sequences das tabelas de desligamento para evitar colisão de ID
+    await client.query(`
+      SELECT setval('desligamentos_historico_id_seq', GREATEST((SELECT COALESCE(MAX(id), 1) FROM desligamentos_historico), 1));
+      SELECT setval('desligamentos_justificados_id_seq', GREATEST((SELECT COALESCE(MAX(id), 1) FROM desligamentos_justificados), 1));
+    `);
+
     let count = 0;
+    let inseridos = 0;
+    let atualizados = 0;
     const datasTocadas = new Set();
 
     for (const d of desligamentos) {
@@ -475,12 +501,17 @@ async function insertDesligamentosJustificados(desligamentos, loteId) {
       ];
 
       await client.query(upsertSql, params);
-      await client.query(upsertHistoricoSql, params);
+      const resHist = await client.query(upsertHistoricoSql, params);
+      if (resHist.rows[0] && resHist.rows[0].is_insert) {
+        inseridos++;
+      } else {
+        atualizados++;
+      }
       count++;
       datasTocadas.add(dataDeslig);
     }
 
-    return { count, datasTocadas: [...datasTocadas] };
+    return { count, inseridos, atualizados, datasTocadas: [...datasTocadas] };
   });
 }
 
@@ -1198,6 +1229,54 @@ async function updatePontoBatch(alteracoes) {
   });
 }
 
+/**
+ * Converte erros técnicos do PostgreSQL / Pool em mensagens amigáveis e explicativas em português
+ */
+function formatFriendlyDbError(err) {
+  if (!err) return 'Ocorreu um erro inesperado ao processar os dados.';
+
+  const msg = err.message || String(err);
+  const code = err.code;
+
+  // Violação de Chave Única / Duplicidade (Postgres 23505)
+  if (code === '23505' || msg.includes('unique constraint') || msg.includes('duplicate key')) {
+    if (msg.includes('desligamentos') || (err.constraint && err.constraint.includes('deslig'))) {
+      return 'Já existem registros cadastrados para este colaborador no período informado. Os dados foram atualizados com sucesso.';
+    }
+    if (msg.includes('ponto') || (err.constraint && err.constraint.includes('ponto'))) {
+      return 'Já existem registros de ponto cadastrados para os colaboradores no período informado. Os dados foram atualizados com sucesso.';
+    }
+    return 'Já existem registros cadastrados com estas informações no período informado. Os dados foram atualizados com sucesso.';
+  }
+
+  // Violação de Chave Estrangeira (Postgres 23503)
+  if (code === '23503' || msg.includes('foreign key constraint')) {
+    return 'Não foi possível salvar o registro pois uma dependência relacionada não foi encontrada no banco de dados.';
+  }
+
+  // Violação de Not Null (Postgres 23502)
+  if (code === '23502' || msg.includes('not-null constraint')) {
+    return 'Um ou mais campos obrigatórios não foram preenchidos corretamente no processamento.';
+  }
+
+  // Concorrência / Deadlock / Lock Timeout (Postgres 40001, 40P01, 55P03)
+  if (code === '40001' || code === '40P01' || code === '55P03') {
+    return 'O banco de dados está processando outra carga concorrente. Por favor, tente novamente em alguns instantes.';
+  }
+
+  // Timeout de Query ou Cancelamento (Postgres 57014)
+  if (code === '57014' || msg.includes('timeout')) {
+    return 'A operação demorou mais do que o esperado para responder. Os dados continuam íntegros. Tente novamente.';
+  }
+
+  // Erros de conexão de rede
+  if (code === 'ECONNREFUSED' || code === 'ETIMEDOUT' || msg.includes('Connection terminated') || msg.includes('connection')) {
+    return 'Instabilidade temporária na conexão com o banco de dados. Por favor, verifique a rede e tente novamente.';
+  }
+
+  return 'Não foi possível concluir o salvamento dos dados devido a uma inconsistência. Por favor, tente novamente.';
+}
+
 module.exports = {
   FALLBACK_NEON_DATABASE_URL,
   createPgPool,
@@ -1234,5 +1313,6 @@ module.exports = {
   normalizeFuncionarioKey,
   formatHorarioValue,
   verificarMatriculasNovas,
-  updatePontoBatch
+  updatePontoBatch,
+  formatFriendlyDbError
 };
