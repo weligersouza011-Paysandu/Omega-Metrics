@@ -418,7 +418,7 @@
           } catch (e) {}
         }
 
-        var isRootAdmin = u.matricula === '0000';
+        var isRootAdmin = u.matricula === '0000' || u.matricula === '23574';
 
         html += '<tr style="border-bottom: 1px solid var(--eng-border);">' +
           '<td style="padding: 14px 24px; font-weight: 700; color: var(--eng-text-title);">' +
@@ -494,7 +494,7 @@
       document.getElementById('modal-usuario-titulo').textContent = 'Editar Usuário (' + u.matricula + ')';
       document.getElementById('usuario-id').value = u.id;
       document.getElementById('usuario-matricula').value = u.matricula;
-      document.getElementById('usuario-matricula').readOnly = (u.matricula === '0000');
+      document.getElementById('usuario-matricula').readOnly = (u.matricula === '0000' || u.matricula === '23574');
       document.getElementById('usuario-nome').value = u.nome;
       document.getElementById('usuario-perfil').value = u.perfil;
       document.getElementById('usuario-status').value = u.status;
@@ -569,8 +569,8 @@
     }
 
     async function excluirUsuario(id, matricula) {
-      if (matricula === '0000') {
-        alert('O usuário Master (0000) não pode ser excluído.');
+      if (matricula === '0000' || matricula === '23574') {
+        alert('O usuário Administrador (' + matricula + ') não pode ser excluído.');
         return;
       }
 
